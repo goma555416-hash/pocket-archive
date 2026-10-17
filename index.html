@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#FBFAF7" />
+  <meta name="description" content="Pocket Archive — 你的個人收藏收件匣。快速保存連結，慢慢整理靈感。" />
+  <meta name="color-scheme" content="light" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="./icons/icon-180.png" />
+  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./theme.css" />
+  <title>Pocket Archive — 個人收藏收件匣</title>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar" aria-label="主要導覽">
+      <a class="brand" href="./" aria-label="Pocket Archive 首頁">
+        <span class="brand-mark" aria-hidden="true"><img class="brand-symbol" src="./icons/icon.svg" alt="" /></span>
+        <span><strong>Pocket Archive</strong><small>your personal collection</small></span>
+      </a>
+      <div class="side-label">COLLECTION</div>
+      <nav class="side-nav" id="side-nav">
+        <button class="nav-button is-active" data-view="inbox" type="button"><span>▣</span> 收件匣 <b id="nav-count-inbox">0</b></button>
+        <button class="nav-button" data-view="saved" type="button"><span>◇</span> 已整理 <b id="nav-count-saved">0</b></button>
+        <button class="nav-button" data-view="archived" type="button"><span>▤</span> 已封存 <b id="nav-count-archived">0</b></button>
+        <button class="nav-button" data-view="all" type="button"><span>▦</span> 全部收藏 <b id="nav-count-all">0</b></button>
+      </nav>
+      <div class="side-bottom">
+        <p>收藏值得留下的，<br>其他的慢慢整理。</p>
+        <span class="version">LOCAL FIRST · V1.2</span>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <div class="mobile-brand"><span class="brand-mark" aria-hidden="true"><img class="brand-symbol" src="./icons/icon.svg" alt="" /></span><strong>Pocket Archive</strong></div>
+        <span class="topbar-kicker">MY PRIVATE CORNER / 001</span>
+        <div class="topbar-actions">
+          <button class="button ghost small" id="import-button" type="button" title="匯入備份">匯入</button>
+          <button class="button ghost small" id="export-button" type="button" title="下載 JSON 備份">匯出備份 ↗</button>
+        </div>
+      </header>
+
+      <main class="main-content">
+        <section class="hero" aria-labelledby="page-heading">
+          <div>
+            <div class="eyebrow"><span class="eyebrow-line"></span> A PLACE FOR ALL YOUR FINDS</div>
+            <h1 id="page-heading">今天，<em>收藏了什麼？</em></h1>
+            <p>有趣的文章、喜歡的設計、想玩的遊戲。<br>先放進來，等有空再好好看看。</p>
+          </div>
+          <button type="button" id="new-button" class="button primary large"><span aria-hidden="true">＋</span> 新增收藏</button>
+        </section>
+
+        <section class="stats-row" aria-label="收藏統計">
+          <div class="stat"><span class="stat-name">總收藏</span><strong id="stat-all">0</strong><span class="stat-unit">COLLECTED</span></div>
+          <div class="stat"><span class="stat-name">待整理</span><strong id="stat-inbox">0</strong><span class="stat-unit">INBOX</span></div>
+          <div class="stat"><span class="stat-name">已整理</span><strong id="stat-saved">0</strong><span class="stat-unit">ORGANIZED</span></div>
+          <div class="stat tip"><span aria-hidden="true">✳</span><p>一個好的收藏系統，<br>應該讓你更輕鬆。</p></div>
+        </section>
+
+        <section class="collection-section" aria-label="收藏內容">
+          <div class="section-heading"><div><div class="eyebrow subtle">YOUR LIBRARY</div><h2 id="list-title">收件匣 <small id="result-count">0</small></h2></div><span id="filter-caption">尚未整理的收藏</span></div>
+          <div class="toolbar">
+            <label class="search-wrap" for="search-input"><span aria-hidden="true">⌕</span><input id="search-input" type="search" placeholder="搜尋標題、標籤、網址或備註…" autocomplete="off" /><kbd>/</kbd></label>
+            <label class="select-wrap"><span class="sr-only">依類型篩選</span><select id="type-filter"><option value="all">所有類型</option><option>文章</option><option>影片</option><option>圖片</option><option>遊戲</option><option>香水</option><option>工具</option><option>其他</option></select></label>
+            <label class="select-wrap"><span class="sr-only">排序方式</span><select id="sort-filter"><option value="new">最新收藏</option><option value="old">最早收藏</option><option value="title">標題 A–Z</option></select></label>
+          </div>
+          <div id="cards" class="cards-grid" aria-live="polite"></div>
+          <div id="empty-state" class="empty-state" hidden><div class="empty-graphic" aria-hidden="true">✦</div><h3 id="empty-title">這裡還沒有收藏</h3><p id="empty-message">看到喜歡的東西，就先把網址放進來。</p><button class="button outline" id="empty-add" type="button">＋ 新增第一筆收藏</button></div>
+        </section>
+        <footer class="footer"><span>POCKET ARCHIVE · MADE FOR ONE</span><span>所有收藏僅儲存在此瀏覽器 · 記得定期備份</span></footer>
+      </main>
+    </div>
+  </div>
+
+  <nav class="mobile-nav" id="mobile-nav" aria-label="手機導覽">
+    <button class="mobile-nav-button active" type="button" data-view="inbox"><span>▣</span>收件匣</button>
+    <button class="mobile-nav-button" type="button" data-view="saved"><span>◇</span>已整理</button>
+    <button class="mobile-nav-button" type="button" data-view="all"><span>▦</span>全部</button>
+    <button class="mobile-nav-button" type="button" id="mobile-new"><span>＋</span>新增</button>
+  </nav>
+
+  <dialog id="entry-dialog" aria-labelledby="dialog-heading">
+    <form id="entry-form" class="entry-form">
+      <div class="modal-heading"><div><div class="eyebrow subtle">KEEP WHAT MATTERS</div><h2 id="dialog-heading">新增收藏</h2></div><button type="button" id="dialog-close" class="icon-button" aria-label="關閉">✕</button></div>
+      <input type="hidden" name="entryId" id="entry-id" />
+      <label>收藏網址 <span>*</span><div class="url-entry"><input type="text" id="entry-url" name="url" inputmode="url" placeholder="https://example.com/…" required /><button type="button" id="paste-url" title="從剪貼簿貼上">貼上</button></div></label>
+      <label>標題 <small>選填；留白將使用網站網域</small><input type="text" id="entry-title" name="title" maxlength="160" placeholder="這個收藏叫什麼？" /></label>
+      <div class="form-row"><label>類型<select name="type" id="entry-type"><option>文章</option><option>影片</option><option>圖片</option><option>遊戲</option><option>香水</option><option>工具</option><option>其他</option></select></label><label>狀態<select name="status" id="entry-status"><option value="inbox">待整理</option><option value="saved">已整理</option><option value="archived">已封存</option></select></label></div>
+      <label>標籤 <small>使用逗號分隔</small><input type="text" id="entry-tags" name="tags" maxlength="400" placeholder="例如：靈感、設計、稍後閱讀" /></label>
+      <label>備註 <small>選填</small><textarea id="entry-note" name="note" rows="3" maxlength="3000" placeholder="為什麼想收藏它？"></textarea></label>
+      <div class="modal-footer"><button type="button" id="dialog-cancel" class="button ghost">取消</button><button class="button primary" type="submit" id="save-button">儲存收藏 →</button></div>
+    </form>
+  </dialog>
+  <input type="file" id="backup-file" accept=".json,application/json" hidden />
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

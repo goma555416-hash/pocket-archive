@@ -1,0 +1,72 @@
+/* Pocket Archive design baseline v0.5 — Minimal & Modern; Butter Yellow × Periwinkle. */
+:root {
+  --ink:#29344B;
+  --muted:#68758B;
+  --soft:#F0F1FA;
+  --bg:#FBFAF7;
+  --paper:#FFFFFF;
+  --sage:#CBD7EF;
+  --accent:#52669A; /* UI action tone darkened for legible text */
+  --line:#E6E7ED;
+  --shadow:0 14px 42px rgba(61,75,110,.06);
+  --butter:#FFF2C9;
+  --periwinkle:#CBD7EF;
+  --lavender-mist:#F0E5FF;
+  --subtle-ink:#53617A;
+}
+body { background:linear-gradient(140deg,#FFFDF6 0%,#FAF9FA 43%,#F6F7FE 100%) fixed; }
+:focus-visible {outline:3px solid #728DD0;outline-offset:3px}
+.sidebar {background:linear-gradient(162deg,#FFF9E8 0%,#F7F5FD 57%,#E8EDFC 100%);border-right:1px solid #E3E5F0}
+.brand-mark {background:transparent;box-shadow:0 4px 14px rgba(79,94,143,.08);padding:0;overflow:hidden;border-radius:10px}
+.brand-symbol {height:100%;width:100%;display:block;object-fit:cover}
+.brand small,.side-label,.version {color:#747F98}
+.nav-button {color:#596982}
+.nav-button b,.side-bottom,.stat-unit {color:#7B869D}
+.nav-button:hover {background:rgba(203,215,239,.45)}
+.nav-button.is-active {background:#DEE6F7;color:#344E83}
+.nav-button.is-active b {color:#52669A}
+.side-bottom p {color:#607399}
+.topbar {background:rgba(255,255,255,.63)}
+.topbar-kicker,.eyebrow,.eyebrow.subtle {color:#64799E}
+.eyebrow-line {background:#8099CD}
+.button.primary {background:#52669A;color:white;box-shadow:0 8px 20px rgba(82,102,154,.18)}
+.button.primary:hover {background:#405586}
+.button.ghost {color:#52627E}
+.button.outline {color:#445D91;border-color:#BECBE8}
+.button.ghost:hover {background:#E9EDF9}
+h1 em {color:#6079B5}
+.hero p {color:#6F7C90}
+.stats-row {border-color:#E9E8EF}
+.stat-name {color:#5A6A88}
+.stat.tip {background:linear-gradient(130deg,#FFF6D9,#F2F3FC);color:#667DA8}
+.stat.tip>span {color:#8399D2}
+.stat.tip p {color:#657BA9}
+.section-heading h2 small,.section-heading>span {color:#8690A5}
+.search-wrap:focus-within {border-color:#8A9ED0;box-shadow:0 0 0 3px #E4E9F9}
+.search-wrap>span,.search-wrap kbd {color:#7C8BAD}
+.select-wrap select {color:#53617A}
+.item-card {border-color:#E7E9F2;box-shadow:0 7px 25px rgba(57,75,121,.05)}
+.item-card:hover {border-color:#BFCDEA}
+.category {color:#486392;background:#EAF0FB}
+.card-host,.card-note,.card-date,.card-menu {color:#7A88A1}
+.card-menu:hover {background:#EEF1FA}
+.tag {color:#607397;background:#F0F2FC}
+.card-footer {border-color:#EDF0F6}
+.text-action {color:#526AA5}
+.empty-state {border-color:#CCD6EF;background:#FBFBFE}
+.empty-graphic {background:linear-gradient(135deg,#FFF2C9,#CBD7EF);color:#526AA5}
+.empty-state p,.footer {color:#7A879C}
+#entry-dialog {border-color:#E0E6F3;box-shadow:0 30px 90px rgba(32,42,69,.25)}
+#entry-dialog::backdrop {background:rgba(27,37,67,.64)}
+.icon-button {background:#F1F3FB;color:#637498}
+.entry-form input,.entry-form select,.entry-form textarea {background:#FEFEFF;border-color:#DFE5F1}
+.entry-form input:focus,.entry-form select:focus,.entry-form textarea:focus {border-color:#849CD3;box-shadow:0 0 0 3px #E8EDFC}
+.entry-form label small {color:#7887A2}
+.url-entry button {border-color:#C7D3EF;color:#455F97;background:#EDF2FD}
+.toast {background:#344D81;box-shadow:0 15px 40px rgba(34,45,86,.20)}
+@media(max-width:760px) {
+  .topbar {background:rgba(255,255,255,.84)}
+  .mobile-nav {background:rgba(255,255,255,.96);border-color:#E4E7F1;box-shadow:0 -4px 20px rgba(47,60,102,.09)}
+  .mobile-nav-button {color:#7A88A4}
+  .mobile-nav-button.active {color:#4E67A4}
+}

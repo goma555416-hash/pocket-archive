@@ -1,0 +1,26 @@
+{
+  "id": "./",
+  "name": "Pocket Archive — 個人收藏收件匣",
+  "short_name": "Pocket Archive",
+  "description": "個人收藏收件匣：先收藏，再慢慢整理。",
+  "lang": "zh-Hant",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#FBFAF7",
+  "theme_color": "#FBFAF7",
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

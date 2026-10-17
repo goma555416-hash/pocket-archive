@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Pocket Archive 實心書籤圖示">
+  <defs>
+    <linearGradient id="ground" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFF9E9"/>
+      <stop offset="0.27" stop-color="#FFF2C9"/>
+      <stop offset="0.62" stop-color="#F2EFF9"/>
+      <stop offset="1" stop-color="#CBD7EF"/>
+    </linearGradient>
+    <radialGradient id="mist" cx="0.78" cy="0.21" r="0.8">
+      <stop offset="0" stop-color="#F0E5FF" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#F0E5FF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#ground)"/>
+  <rect width="1024" height="1024" fill="url(#mist)"/>
+  <path fill="#8199D2" d="M377 287c-15 0-27 12-27 27v407c0 20 16 30 32 20l130-81 130 81c16 10 32 0 32-20V314c0-15-12-27-27-27H377z"/>
+</svg>
