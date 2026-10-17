@@ -1,0 +1,35 @@
+{
+  "format": "pocket-archive-inbox",
+  "schema_version": 2,
+  "export_id": "export-anonymous-example",
+  "exported_at": "2026-10-17T00:00:00.000Z",
+  "privacy_notice": "匿名測試資料",
+  "items": [
+    {
+      "id": "pa-example-article",
+      "kind": "link",
+      "url": "https://example.org/design-accessibility",
+      "title": "Accessible color systems",
+      "note": "研究低對比配色的可讀性",
+      "type": "文章",
+      "category": "設計參考",
+      "tags": ["可及性"],
+      "status": "inbox",
+      "source": "example.org",
+      "attachment": null
+    },
+    {
+      "id": "pa-example-private",
+      "kind": "link",
+      "url": "https://example.net/requires-login",
+      "title": "Private post",
+      "note": "",
+      "type": "社群貼文",
+      "category": "",
+      "tags": [],
+      "status": "inbox",
+      "source": "example.net",
+      "attachment": null
+    }
+  ]
+}

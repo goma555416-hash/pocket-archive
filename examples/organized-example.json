@@ -1,0 +1,25 @@
+{
+  "format": "pocket-archive-organized",
+  "schema_version": 2,
+  "source_export_id": "export-anonymous-example",
+  "items": [
+    {
+      "id": "pa-example-article",
+      "analysis_status": "completed",
+      "suggested_categories": ["設計參考"],
+      "suggested_tags": ["配色", "可及性"],
+      "summary": "一份以可及性為核心的配色系統參考。",
+      "reason": "根據匯出標題與使用者備註。",
+      "confidence": "medium"
+    },
+    {
+      "id": "pa-example-private",
+      "analysis_status": "insufficient_data",
+      "suggested_categories": [],
+      "suggested_tags": [],
+      "summary": "",
+      "reason": "頁面需要登入，沒有可驗證內容。",
+      "confidence": "low"
+    }
+  ]
+}
