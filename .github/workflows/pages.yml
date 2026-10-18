@@ -26,6 +26,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - name: Validate Static Assets exclusions
+        run: npm run test:assets
+        env:
+          XDG_CONFIG_HOME: /tmp/pocket-archive-assets-config
       - name: Validate Cloudflare Worker bundle
         run: npx wrangler deploy --dry-run --outdir /tmp/pocket-archive-worker-build
         env:

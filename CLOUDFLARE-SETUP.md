@@ -31,6 +31,7 @@ git status --short --branch
 npm ci
 npm test
 npm run test:security
+npm run test:assets
 npm run test:e2e
 
 $env:XDG_CONFIG_HOME = Join-Path $env:TEMP 'pocket-archive-wrangler-config'
@@ -40,6 +41,17 @@ npx wrangler deploy --dry-run --outdir (Join-Path $env:TEMP 'pocket-archive-work
 ```
 
 `wrangler.jsonc` 必須仍保留 Worker entry、Static Assets `ASSETS` binding、`/api/*` Worker-first routing、D1 `DB` binding，以及本頁列出的正式 origin / Database ID。dry-run 不會部署。
+
+### Static Assets 安全邊界
+
+目前 `assets.directory` 保持 repository 根目錄，因為 PWA 的 `index.html`、CSS、JavaScript modules、`sw.js`、Manifest、icons 與 Pages 發布流程都以現有根路徑運作。改成 `public/` 白名單目錄理論上更安全，但會同時牽動 Service Worker 快取路徑、GitHub Pages artifact、模組位置與雙 origin 回滾；本次不以部署安全補修為由進行這項結構性搬移。
+
+現階段使用兩層防護：
+
+1. `.gitignore` 阻止 `.dev.vars*`、`.env*`、私有備份、AI 匯出與本機工具資料進入 Git。
+2. `.assetsignore` 獨立阻止上述資料以及 `.wrangler/`、`private-data/`、`exports/`、測試／Worker source／repository metadata 進入 Cloudflare Static Assets。
+
+`npm run test:assets` 會建立內容明確標示為非機密的暫存哨兵檔，以實際本機 Wrangler server 驗證私有路徑全部為 `404`，同時確認 HTML、CSS、JavaScript、Manifest 與 icons 仍可提供；測試結束會只刪除自己建立的精確檔名。未通過此測試或 dry-run 時不得正式部署。未來若要改用真正的 `public/` 白名單，應另開 PR 並同時驗證 Worker、Pages、PWA 更新與離線回滾。
 
 ## 2. 登入並核對 Cloudflare 帳號
 
