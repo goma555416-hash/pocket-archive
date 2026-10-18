@@ -2,6 +2,8 @@
 
 瀏覽器儲存以 origin 隔離；`https://goma555416-hash.github.io` 的 IndexedDB 不會自動出現在 `workers.dev` 或自訂網域。舊站不得被自動導向、刪資料或停用。完整切換前，先用匿名資料演練一次。
 
+> **時間點要求：** 因 `main` 更新會自動重新部署 GitHub Pages，至少一份舊站完整 ZIP 必須在首次合併 PR #6 **之前**下載並驗證；以下「遷移前」步驟不是等 Cloudflare 部署時才開始。若尚未完成備份，停止合併。
+
 ## 一、遷移前
 
 1. 在舊 iPhone 與 Windows 各自打開 Pocket Archive，記錄總收藏／待整理／圖片數與未解決衝突。

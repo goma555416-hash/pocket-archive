@@ -4,10 +4,16 @@ v2.2 正式持續登入與快捷收件使用 Cloudflare Worker + Static Assets +
 
 本專案不需要建置步驟或伺服器。GitHub Pages 工作流程會把儲存庫中的靜態檔案原樣發布；啟用部署會建立可公開存取的網站，因此必須由儲存庫擁有者確認。
 
+## 第一次合併 v2.2 前（不可後補）
+
+`main` 更新會自動重新部署現有 GitHub Pages。合併 PR #6 前，先在目前 v2.1.3 舊站下載「完整 ZIP」備份，確認 ZIP 可開啟，並保存第二份副本。記錄舊 Pages URL 與 Google OAuth 設定，保持舊 Authorized JavaScript origin 可用。此步驟必須早於任何 v2.2 合併，而不是 Cloudflare 正式部署前才做。
+
+合併後的靜態 Pages origin 沒有 Worker API 時，App 會由 `/api/owner/status` 的非 JSON 404 判定後端不存在，繼續使用原本的瀏覽器 GIS OAuth、收藏、ZIP 備份與 Drive 同步路徑。這個 fallback 不會清除、重新建立或自動遷移 IndexedDB。仍應先備份，因為 Pages 自動發布與 Service Worker 更新本身不是資料搬移工具。
+
 ## GitHub Pages
 
-1. 確認 `git status` 沒有任何備份、圖片、`organized.json`、token 或私人資料。
-2. 把此分支合併到預設分支。
+1. 確認上述舊站完整備份已完成，且 `git status` 沒有任何備份、圖片、`organized.json`、token 或私人資料。
+2. 依序合併後端、快速收藏、遷移 PR；每次都等待 Pages workflow 通過並做本機功能 smoke test。
 3. GitHub Repository → **Settings → Pages → Build and deployment → Source** 選 **GitHub Actions**。
 4. 在 **Actions** 查看 `Deploy Pocket Archive to GitHub Pages`。成功後 Pages 畫面會顯示 HTTPS 網址。
 5. 用 Windows 測試新增一筆匿名資料、重新整理及離線啟動，再用 iPhone Safari 加入主畫面。

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  SCHEMA_VERSION, normalizeUrl, cleanTags, createEntry, createImageEntry, readBackup,
+  SCHEMA_VERSION, normalizeUrl, cleanTags, createEntry, createCaptureEntry, createImageEntry, readBackup,
   createBackupEnvelope, previewMerge, mergeEntries, matchesEntry, extractIncomingShare,
   escapeHtml, parseBatchUrls, createInboxEnvelope, readOrganized, applySuggestions,
   restoreSnapshot, validatedEntry, sha256, hasValidImageSignature
@@ -49,6 +49,13 @@ test('建立連結收藏可搜尋分類、來源、標籤與 Codex 摘要', () =
   assert.equal(entry.normalizedUrl, 'https://youtube.com/watch?v=a');
   assert.equal(entry.type, '影片');
   assert.ok(matchesEntry(entry, '工作 配色 youtube'));
+});
+
+test('相同快速收件工作在租約重試與不同裝置上產生相同收藏 ID', () => {
+  const job = { id: 'capture_stable-job-1', url: 'https://example.com/story', originalUrl: 'https://example.com/story?utm_source=share', text: '值得收藏 https://example.com/story?utm_source=share', title: '範例', createdAt: Date.parse('2026-10-18T00:00:00Z') };
+  const iphone = createCaptureEntry(job); const windows = createCaptureEntry(job);
+  assert.equal(iphone.id, job.id); assert.equal(windows.id, job.id); assert.deepEqual(iphone, windows);
+  assert.equal(iphone.note, '值得收藏');
 });
 
 test('圖片 metadata、雜湊與大小會驗證，原始 Blob 不進 entry', async () => {

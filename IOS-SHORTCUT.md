@@ -17,6 +17,8 @@ Apple Shortcuts 的文字欄位不是 Keychain 或 Secure Enclave；有限憑證
 
 若憑證遺失，不需找回；撤銷舊憑證並建立新的一個。
 
+捷徑憑證與 Google OAuth grant 相互獨立。「撤銷 Google 授權與所有網頁裝置」會清除加密 Refresh Token 與網頁 Session，但不會讓已安裝捷徑無預警失效；要停用遺失裝置，必須在「iPhone 一鍵收藏」清單單獨撤銷該憑證。
+
 ## 建立捷徑
 
 iOS 版本間的動作翻譯可能略有不同。本專案不產生無法驗證簽章的假 `.shortcut` 安裝檔；請在 Apple「捷徑」App 手動建立：

@@ -158,6 +158,16 @@ export function createEntry(input) {
   return validatedEntry({ ...input, id: makeId(), createdAt: now, updatedAt: now });
 }
 
+export function createCaptureEntry(job) {
+  if (!job || typeof job.id !== 'string' || !SAFE_ID.test(job.id)) throw new Error('快速收件工作 ID 無效');
+  const timestamp = Number(job.createdAt); const createdAt = Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : new Date().toISOString();
+  const originalUrl = job.originalUrl || job.url;
+  const note = String(job.text || '').replace(originalUrl, '').trim().slice(0, 5000);
+  return validatedEntry({
+    id: job.id, url: job.url, originalUrl, title: job.title, note, type: inferType(job.url), source: displayHost(job.url), createdAt, updatedAt: createdAt
+  });
+}
+
 export function createImageEntry(file, hash, attachmentId = makeId('att')) {
   const attachment = { id: attachmentId, name: file.name, size: file.size, mimeType: file.type, hash };
   return createEntry({ kind: 'image', title: file.name.replace(/\.[^.]+$/, ''), type: '圖片', source: 'file', attachment });
