@@ -1,5 +1,7 @@
 # HTTPS 靜態部署
 
+v2.2 正式持續登入與快捷收件使用 Cloudflare Worker + Static Assets + D1，設定見 [CLOUDFLARE-SETUP.md](./CLOUDFLARE-SETUP.md)。本頁 GitHub Pages 方案保留為舊 origin、遷移工具與安全回滾入口，不提供 Refresh Token 後端。
+
 本專案不需要建置步驟或伺服器。GitHub Pages 工作流程會把儲存庫中的靜態檔案原樣發布；啟用部署會建立可公開存取的網站，因此必須由儲存庫擁有者確認。
 
 ## 第一次合併 v2.2 前（不可後補）
@@ -30,3 +32,5 @@
 - 全站 HTTPS。
 
 部署網址與 `localhost` 是不同儲存來源。先在舊網址下載完整備份，再到新網址匯入；不要期待瀏覽器自動搬移 IndexedDB。
+
+正式搬移必須依 [MIGRATION-ROLLBACK.md](./MIGRATION-ROLLBACK.md) 使用遷移 ZIP。不要在 PR 合併時設定 redirect、停用 Pages 或清除舊站資料。

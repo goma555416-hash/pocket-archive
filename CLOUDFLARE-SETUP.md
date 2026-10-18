@@ -95,4 +95,4 @@ npx wrangler deploy
 3. 每個既有擁有者下一次成功使用 Drive 時，即使 Access Token 尚未到期，也會把既有 Access Token 與 Refresh Token 重新加密成目前版本；Google 回傳新 Refresh Token 時也走相同更新路徑。
 4. 用 D1 查詢確認 `oauth_credentials` 中所有非空密文都以新版本前綴開頭，再等待至少 5 分鐘讓 Session rotation 過渡密文失效，並完成 D1 備份，才能刪除 previous key。仍有舊版本時不要刪除；否則只能撤銷本機 credential 並要求重新授權。
 
-「撤銷 Google 授權與所有裝置」會先嘗試呼叫 Google revoke，無論 Google 暫時是否可達，都會刪除 D1 的整筆 OAuth credential（包含 Refresh Token 密文）並撤銷全部網頁 Session。iPhone 捷徑憑證是獨立的最小權限憑證，不會被此按鈕暗中撤銷；應在「iPhone 快速收藏」清單逐一撤銷或輪替。
+「撤銷 Google 授權與所有裝置」會只在記憶體暫存解密後的 token，先刪除 D1 的整筆 OAuth credential（包含 Refresh Token 密文）並撤銷全部網頁 Session，再 best-effort 呼叫 Google revoke；因此 Google 暫時不可達也不會讓本機密文繼續留存。iPhone 捷徑憑證是獨立的最小權限憑證，不會被此按鈕暗中撤銷；應在「iPhone 快速收藏」清單逐一撤銷或輪替。

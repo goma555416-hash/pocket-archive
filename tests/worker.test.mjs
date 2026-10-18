@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { fetchHandler } from '../worker/src/index.mjs';
 import { bytesToBase64Url, pkceChallenge, randomToken } from '../worker/src/security.mjs';
 import { resetGoogleKeyCache } from '../worker/src/google.mjs';
+
+let DatabaseSync;
+try { ({ DatabaseSync } = await import('node:sqlite')); } catch { /* Node 20: D1 integration test is skipped */ }
 
 class D1Statement {
   constructor(database, sql) { this.database = database; this.sql = sql; this.values = []; }
@@ -68,7 +70,7 @@ async function oauthFixture({ ownerSub = '100000000000000000001', claimSub = own
   return { env, start, callback, setClaimSub(value) { currentClaimSub = value; }, setClock(value) { clock = value; }, revokedCount() { return revoked; } };
 }
 
-test('Worker OAuth code flow restores, rotates and revokes a secure session', async () => {
+test('Worker OAuth code flow restores, rotates and revokes a secure session', { skip: !DatabaseSync && 'node:sqlite 需要 Node 22.5+' }, async () => {
   resetGoogleKeyCache();
   const schema = await currentAuthSchema();
   const keys = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
@@ -160,7 +162,7 @@ test('Worker OAuth code flow restores, rotates and revokes a secure session', as
   const afterRevoke = await fetchHandler(new Request('https://app.example/api/session', { headers: { Cookie: currentCookies } }), env); assert.equal(afterRevoke.status, 401);
 });
 
-test('owner policy defaults closed and rejects an unauthorized signed Google account without persistence', async () => {
+test('owner policy defaults closed and rejects an unauthorized signed Google account without persistence', { skip: !DatabaseSync && 'node:sqlite 需要 Node 22.5+' }, async () => {
   const unconfigured = await oauthFixture({ ownerSub: '', bootstrapToken: '' });
   const deniedStart = await unconfigured.start();
   assert.equal(deniedStart.status, 503); assert.equal((await deniedStart.json()).error.code, 'owner_not_configured');
@@ -175,7 +177,7 @@ test('owner policy defaults closed and rejects an unauthorized signed Google acc
   assert.equal(fixture.revokedCount(), 1, 'newly issued Google token is revoked best-effort');
 });
 
-test('one-time owner bootstrap binds the verified sub and cannot authorize a second account', async () => {
+test('one-time owner bootstrap binds the verified sub and cannot authorize a second account', { skip: !DatabaseSync && 'node:sqlite 需要 Node 22.5+' }, async () => {
   const fixture = await oauthFixture({ ownerSub: '', claimSub: '300000000000000000003', bootstrapToken: 'a-high-entropy-one-time-secret' });
   const status = await fetchHandler(new Request('https://app.example/api/owner/status'), fixture.env); assert.equal(status.status, 200);
   assert.deepEqual(await status.json(), { ok: true, configured: false, bindingMethod: null, bootstrapAvailable: true, bootstrapReady: false });
@@ -193,14 +195,14 @@ test('one-time owner bootstrap binds the verified sub and cannot authorize a sec
   assert.equal(fixture.env.DB.database.prepare('SELECT COUNT(*) AS count FROM users').get().count, 1);
 });
 
-test('OAuth start rate limit bounds D1 attempt creation', async () => {
+test('OAuth start rate limit bounds D1 attempt creation', { skip: !DatabaseSync && 'node:sqlite 需要 Node 22.5+' }, async () => {
   const fixture = await oauthFixture();
   for (let attempt = 0; attempt < 10; attempt += 1) assert.equal((await fixture.start()).status, 302);
   const limited = await fixture.start(); assert.equal(limited.status, 429);
   assert.equal(fixture.env.DB.database.prepare('SELECT COUNT(*) AS count FROM oauth_attempts').get().count, 10);
 });
 
-test('access through the current key safely re-encrypts existing Google credentials after key rotation', async () => {
+test('access through the current key safely re-encrypts existing Google credentials after key rotation', { skip: !DatabaseSync && 'node:sqlite 需要 Node 22.5+' }, async () => {
   const fixture = await oauthFixture(); const start = await fixture.start(); const callback = await fixture.callback(start);
   const session = cookieValue(cookies(callback), '__Host-pa_session'); assert.ok(session);
   const before = fixture.env.DB.database.prepare('SELECT * FROM oauth_credentials').get();

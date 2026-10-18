@@ -57,6 +57,12 @@
           <small>只有你按下按鈕後才會讀取，不透過網址參數傳送私人內容。</small>
         </section>
 
+        <section id="migration-banner" class="quick-capture" aria-label="跨來源遷移提醒" hidden>
+          <span>準備搬到 v2.2 新網址？</span>
+          <button id="migration-banner-backup" class="text-action" type="button">先下載完整遷移 ZIP</button>
+          <small>舊網址不會自動清除或跳轉；完成新站驗證前請勿兩邊同時修改。</small>
+        </section>
+
         <section class="stats-row" aria-label="收藏統計">
           <div class="stat"><span class="stat-name">總收藏</span><strong id="stat-all">0</strong><span class="stat-unit">COLLECTED</span></div>
           <div class="stat"><span class="stat-name">待整理</span><strong id="stat-inbox">0</strong><span class="stat-unit">INBOX</span></div>
@@ -123,7 +129,7 @@
 
   <dialog id="backup-dialog" aria-labelledby="backup-heading">
     <div class="entry-form"><div class="modal-heading"><div><div class="eyebrow subtle">PORTABLE & OFFLINE</div><h2 id="backup-heading">備份與還原</h2></div><button type="button" data-close="backup-dialog" class="icon-button" aria-label="關閉">✕</button></div>
-      <p>無圖片時下載 JSON；含附件時下載完整 ZIP。匯入會先驗證並顯示合併、略過與衝突數量。</p><div class="action-stack"><button id="export-backup" class="button primary" type="button">下載完整備份</button><button id="import-backup" class="button outline" type="button">選擇 JSON／ZIP 還原</button><button id="persist-storage" class="button ghost" type="button">請求瀏覽器保留本機資料</button><button id="undo-ai" class="button ghost" type="button">復原上次 Codex 套用</button></div><p id="backup-status" class="privacy-note"></p>
+      <p>無圖片時下載 JSON；含附件時下載完整 ZIP。匯入會先驗證並顯示合併、略過與衝突數量。</p><div class="action-stack"><button id="export-backup" class="button primary" type="button">下載完整備份</button><button id="export-migration" class="button outline" type="button">下載跨網址遷移 ZIP</button><button id="import-backup" class="button outline" type="button">選擇 JSON／ZIP 還原或遷移</button><button id="persist-storage" class="button ghost" type="button">請求瀏覽器保留本機資料</button><button id="undo-ai" class="button ghost" type="button">復原上次 Codex 套用</button></div><p id="backup-status" class="privacy-note"></p><p id="migration-status" class="privacy-note">遷移 ZIP 會額外保存 tombstone、因果時鐘與 AI 工作索引，但不含任何 Google／Session／捷徑憑證。</p>
     </div>
   </dialog>
 

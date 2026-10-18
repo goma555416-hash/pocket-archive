@@ -82,7 +82,7 @@ python -m http.server 5173
 
 ## 部署
 
-`.github/workflows/pages.yml` 提供 GitHub Pages 靜態部署工作流程，但本專案不會自行公開部署。開啟 Pages 前請確認可接受公開網站，且儲存庫不含備份、圖片、token 或私人資料。詳見 [DEPLOYMENT.md](./DEPLOYMENT.md)。
+正式 v2.2 使用 Cloudflare Worker + Static Assets + D1；帳號設定見 [CLOUDFLARE-SETUP.md](./CLOUDFLARE-SETUP.md)。`.github/workflows/pages.yml` 保留 GitHub Pages 舊 origin 與回滾入口，本專案不會自行切換正式部署。跨 origin 流程見 [MIGRATION-ROLLBACK.md](./MIGRATION-ROLLBACK.md)。
 
 ## 測試
 
