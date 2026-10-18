@@ -46,8 +46,9 @@ Pocket Archive/
 - 每筆 upsert/delete 帶向量時鐘。同步時：較新的因果版本套用、較舊版本忽略、並行版本建立衝突。
 - 刪除使用 tombstone；刪除與編輯同時發生時先保留資料，防止誤刪，再由使用者選擇版本。
 - 使用者解決衝突後會合併兩側時鐘並建立新版本，下一次同步傳播結果。
+- v2.1.3 的 upsert/delete journal 會保留前一版的已驗證 entry metadata（不含附件 Blob），用來辨識「同一份 ZIP 在兩端各自 bootstrap」的相同因果起點。只有並行紀錄能證明源自完全相同內容時才自動合併時鐘；真正的刪除／編輯差異仍保留衝突。衝突決議會合併該項目所有已觀察時鐘，已被較新版本支配的舊衝突會移除，避免舊 journal 再次發布後復活收藏。
 - 圖片依 SHA-256 去重上傳並在下載後驗證。刪除收藏不會自動刪除雲端附件，以避免其他離線裝置尚未同步時永久遺失；孤立附件的安全清理是後續維護工作。
-- 套用遠端狀態時，收藏清單與新下載附件在同一個 `entries + attachments` IndexedDB readwrite transaction 寫入；任何附件錯誤或容量不足都會使整批回滾，不會留下只有 metadata、沒有 Blob 的半套狀態。
+- 套用遠端或本機刪除狀態時，收藏清單、新下載附件與 journal/tombstone/conflict metadata 在同一個 `entries + attachments + meta` IndexedDB readwrite transaction 寫入；任何附件錯誤、容量不足或 metadata 寫入錯誤都會使整批回滾。
 - journal 目前單次讀取上限 100 個裝置/100 個附件索引，適合個人使用；不是多租戶團隊同步服務。
 
 ## Codex Cloud 交換流程

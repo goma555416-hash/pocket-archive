@@ -107,9 +107,11 @@ export class PocketRepository {
     return values;
   }
 
-  async replaceBundle(entries, attachmentBlobs = new Map()) {
+  async replaceBundle(entries, attachmentBlobs = new Map(), { meta = {}, deleteAttachmentIds = [] } = {}) {
     const values = entries.map(validatedEntry);
-    const tx = this.db.transaction(['entries', 'attachments'], 'readwrite');
+    const stores = ['entries', 'attachments'];
+    if (Object.keys(meta).length) stores.push('meta');
+    const tx = this.db.transaction(stores, 'readwrite');
     try {
       const entryStore = tx.objectStore('entries');
       const attachmentStore = tx.objectStore('attachments');
@@ -118,6 +120,11 @@ export class PocketRepository {
         entryStore.put(entry);
         const blob = entry.attachment && attachmentBlobs.get(entry.attachment.id);
         if (blob) attachmentStore.put({ id: entry.attachment.id, blob });
+      }
+      for (const id of deleteAttachmentIds) attachmentStore.delete(id);
+      if (stores.includes('meta')) {
+        const metaStore = tx.objectStore('meta');
+        for (const [key, value] of Object.entries(meta)) metaStore.put({ key, value });
       }
       await transactionDone(tx);
     } catch (error) {
