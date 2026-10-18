@@ -16,7 +16,7 @@ XDG_CONFIG_HOME=<temporary-directory>/config npx wrangler deploy --dry-run --out
 ```
 
 - `npm ci` 完成。第一次使用預設 npm cache 時因本環境不可寫入 `/home/agent/.npm` 而失敗；改用獨立 `/tmp` cache 後同一 lockfile 安裝成功，屬執行環境限制，不是 dependency integrity 或產品錯誤。
-- Node：11 個測試檔、共 61 個 `test()` case 全數通過，並包含所有 JavaScript `node --check`。其中新增 4 個部署設定 case，鎖定正式 workers.dev origin、D1 UUID、Static Assets / `/api/*` routing、三個 migration、OAuth callback、Manifest、Service Worker API bypass，以及 GitHub Pages 無 Worker API 時的相容回退。
+- Node：12 個測試檔、共 62 個 `test()` case 全數通過，並包含所有 JavaScript `node --check`。其中 4 個部署設定 case 鎖定正式 workers.dev origin、D1 UUID、Static Assets / `/api/*` routing、三個 migration、OAuth callback、Manifest、Service Worker API bypass，以及 GitHub Pages 無 Worker API 時的相容回退；另驗證 Static Assets 測試遇到預存同名檔時會拒絕覆寫，失敗清理也不會刪除或改寫原檔。
 - 安全測試：2 個測試檔、共 9 個 `test()` case 全數通過。
 - Static Assets：以 15 個不含真實機密的暫存哨兵檔驗證 `.dev.vars*`、`.env*`、私有目錄、備份／遷移 ZIP／JSON、AI 結果、key、SQLite 與 log 檔同時被 Git 與 Wrangler 排除；本機 Wrangler 對全部私有路徑回覆 `404`，11 個 HTML／CSS／JavaScript／Service Worker／Manifest／icon／公開哨兵檔正常回覆 `200`。CI 也會執行同一驗證。
 - Chromium E2E：既有 v1 migration、新增／批次／圖片、搜尋、備份、跨 origin migration ZIP、Codex、Drive fallback、OAuth popup、IndexedDB 原子回滾、390px、Toast 與離線全部通過。

@@ -66,12 +66,13 @@ async function waitForServer(origin, child, logs) {
 }
 
 const createdDirectories = [];
-const createdFiles = [...privateSentinels, publicSentinel];
+const plannedFiles = [...privateSentinels, publicSentinel];
+const createdFiles = [];
 let child;
 let temporaryConfig;
 
 try {
-  for (const relativePath of createdFiles) {
+  for (const relativePath of plannedFiles) {
     const absolutePath = path.join(root, relativePath);
     assert.equal(await exists(absolutePath), false, `refusing to overwrite existing test path: ${relativePath}`);
     const parent = path.dirname(absolutePath);
@@ -80,6 +81,7 @@ try {
       createdDirectories.push(parent);
     }
     await writeFile(absolutePath, sentinel, { flag: 'wx' });
+    createdFiles.push(relativePath);
   }
 
   for (const relativePath of privateSentinels) {
@@ -125,7 +127,7 @@ try {
     ]);
     if (!stopped && child.exitCode === null) child.kill('SIGKILL');
   }
-  for (const relativePath of createdFiles.reverse()) await rm(path.join(root, relativePath), { force: true });
+  for (const relativePath of [...createdFiles].reverse()) await rm(path.join(root, relativePath), { force: true });
   for (const directory of createdDirectories.reverse()) {
     try { await rmdir(directory); } catch { /* preserve directories that are no longer empty */ }
   }
