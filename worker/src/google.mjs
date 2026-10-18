@@ -1,4 +1,4 @@
-import { base64UrlToBytes, decryptSecret, encryptSecret, safeEqual } from './security.mjs';
+import { base64UrlToBytes, decryptSecret, encryptSecret, safeEqual, secretNeedsReencryption } from './security.mjs';
 
 export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 export const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -50,7 +50,7 @@ export async function verifyGoogleIdToken(token, { clientId, nonce, fetchImpl = 
   if (!audiences.includes(clientId)) throw oauthError('Google 身分憑證對象錯誤');
   if (!Number.isFinite(claims.exp) || claims.exp < seconds - 60 || Number(claims.iat || 0) > seconds + 60) throw oauthError('Google 身分憑證已過期或時間無效');
   if (!safeEqual(claims.nonce || '', nonce || '')) throw oauthError('Google 登入 nonce 驗證失敗');
-  if (!claims.sub || !claims.email || claims.email_verified !== true) throw oauthError('Google 帳號缺少已驗證的身分資訊');
+  if (typeof claims.sub !== 'string' || !claims.sub || typeof claims.email !== 'string' || !claims.email || claims.email_verified !== true) throw oauthError('Google 帳號缺少已驗證的身分資訊');
   return claims;
 }
 
@@ -67,7 +67,20 @@ export async function exchangeAuthorizationCode({ code, verifier, redirectUri, e
 
 export async function refreshGoogleAccessToken(credential, env, { fetchImpl = fetch, now = Date.now() } = {}) {
   if (!credential || credential.revoked_at || credential.reauth_required) throw oauthError('Google Drive 授權已失效，請重新登入', 'reauth_required');
-  if (credential.access_token_cipher && Number(credential.access_token_expires_at) > now + 60_000) return decryptSecret(credential.access_token_cipher, env);
+  if (credential.access_token_cipher && Number(credential.access_token_expires_at) > now + 60_000) {
+    const accessToken = await decryptSecret(credential.access_token_cipher, env);
+    let refreshTokenCipher = null;
+    if (secretNeedsReencryption(credential.refresh_token_cipher, env)) refreshTokenCipher = await encryptSecret(await decryptSecret(credential.refresh_token_cipher, env), env);
+    return {
+      accessToken,
+      accessTokenCipher: secretNeedsReencryption(credential.access_token_cipher, env) ? await encryptSecret(accessToken, env) : null,
+      accessTokenExpiresAt: Number(credential.access_token_expires_at),
+      refreshTokenCipher,
+      refreshTokenExpiresAt: null,
+      scope: credential.scope,
+      reused: true
+    };
+  }
   if (credential.refresh_token_expires_at && Number(credential.refresh_token_expires_at) <= now) throw oauthError('Google 長期授權已到期，請重新登入', 'reauth_required');
   const refreshToken = await decryptSecret(credential.refresh_token_cipher, env);
   const body = new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: refreshToken, grant_type: 'refresh_token' });
@@ -89,17 +102,24 @@ export async function refreshGoogleAccessToken(credential, env, { fetchImpl = fe
     accessToken: result.access_token,
     accessTokenCipher: await encryptSecret(result.access_token, env),
     accessTokenExpiresAt: now + Math.max(60, Number(result.expires_in || 3600)) * 1000,
-    refreshTokenCipher: result.refresh_token ? await encryptSecret(result.refresh_token, env) : null,
+    refreshTokenCipher: result.refresh_token
+      ? await encryptSecret(result.refresh_token, env)
+      : secretNeedsReencryption(credential.refresh_token_cipher, env) ? await encryptSecret(refreshToken, env) : null,
     refreshTokenExpiresAt: result.refresh_token_expires_in ? now + Number(result.refresh_token_expires_in) * 1000 : null,
     scope: result.scope || credential.scope
   };
 }
 
+export async function revokeGooglePlainToken(token, fetchImpl = fetch) {
+  if (!token) return false;
+  const response = await fetchImpl(GOOGLE_REVOKE_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token }) });
+  return response.ok;
+}
+
 export async function revokeGoogleToken(refreshTokenCipher, env, fetchImpl = fetch) {
   if (!refreshTokenCipher) return false;
   const token = await decryptSecret(refreshTokenCipher, env);
-  const response = await fetchImpl(GOOGLE_REVOKE_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token }) });
-  return response.ok;
+  return revokeGooglePlainToken(token, fetchImpl);
 }
 
 export function googleAuthorizationUrl({ env, state, challenge, nonce, redirectUri, loginHint = '' }) {

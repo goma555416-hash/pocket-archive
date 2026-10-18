@@ -20,7 +20,7 @@ const state = {
   cloudSettings: { clientId: '', autoBackup: true, retention: 5, encryption: false },
   cloudPassphrase: '', auth: null, drive: null, workspace: null, backupService: null, aiExchange: null, syncService: null,
   cloudUser: null, cloudBusy: false, backupTimer: null, syncTimer: null,
-  backend: null, backendAvailable: false, backendSession: null, backendSessions: [],
+  backend: null, backendAvailable: false, backendOwner: null, backendSession: null, backendSessions: [],
   googleIdentityStatus: 'idle', googleIdentityPromise: null
 };
 const names = { inbox: ['收件匣', '尚未整理的收藏'], saved: ['已整理', '已經整理好的收藏'], archived: ['已封存', '暫時收起的收藏'], all: ['全部收藏', '這裡收著所有值得留下的事物'] };
@@ -439,11 +439,25 @@ function renderCloudStatus() {
     ? `<strong>已連結 ${escapeHtml(state.cloudUser?.emailAddress || 'Google Drive')}</strong><span>最近同步：${escapeHtml(lastSync)} · 最近備份：${escapeHtml(lastBackup)}</span>`
     : `<strong>${state.backendAvailable ? '尚未登入 Google Drive' : '尚未連結 Google Drive'}</strong><span>本機收藏仍可完整使用；不會假裝已同步。</span>`;
   const connectButton = $('#cloud-connect'); connectButton.hidden = connected; connectButton.disabled = !connected && (state.cloudBusy || (!state.backendAvailable && state.googleIdentityStatus === 'loading'));
+  if (state.backendAvailable && state.backendOwner && !state.backendOwner.configured) connectButton.disabled = true;
   connectButton.textContent = state.backendAvailable ? '登入並連結 Google Drive' : state.googleIdentityStatus === 'loading' ? '正在準備 Google 登入…' : '連結 Google Drive';
   $('#cloud-disconnect').hidden = !connected;
   $('#cloud-revoke-grant').hidden = !(connected && state.backendAvailable);
   $('#legacy-google-settings').hidden = state.backendAvailable;
   $('#device-sessions-section').hidden = !state.backendAvailable || !state.backendSession;
+  const ownerSetup = $('#owner-bootstrap-section');
+  if (ownerSetup) {
+    ownerSetup.hidden = !state.backendAvailable || !state.backendOwner || state.backendOwner.configured;
+    const note = $('#owner-bootstrap-note');
+    const button = $('#owner-bootstrap');
+    if (!ownerSetup.hidden) {
+      button.hidden = !state.backendOwner.bootstrapAvailable;
+      $('#owner-bootstrap-token-row').hidden = !state.backendOwner.bootstrapAvailable;
+      note.textContent = state.backendOwner.bootstrapAvailable
+        ? '輸入部署時設定的一次性綁定碼；驗證後會立即前往 Google，並以簽章驗證過的 sub 綁定唯一擁有者。'
+        : '登入預設關閉。請先依部署文件設定 OWNER_GOOGLE_SUB，或設定一次性 OWNER_BOOTSTRAP_TOKEN。';
+    }
+  }
   $$('[data-requires-cloud]').forEach(button => { button.disabled = !connected || state.cloudBusy; });
   $('#cloud-passphrase-row').hidden = !$('#cloud-encryption')?.checked;
   renderConflicts();
@@ -531,6 +545,18 @@ function connectDrive() {
   void completeDriveConnection(auth, authorization, settingsSaved);
 }
 
+async function bootstrapBackendOwner() {
+  const tokenInput = $('#owner-bootstrap-token'); const token = tokenInput.value;
+  if (!token) { toast('請輸入一次性擁有者綁定碼'); return; }
+  state.cloudBusy = true; renderCloudStatus();
+  try {
+    const result = await state.backend.bootstrapOwner(token); tokenInput.value = '';
+    state.backendOwner = { ...state.backendOwner, bootstrapReady: Boolean(result.ready) };
+    state.backend.beginAuthorization(`${location.pathname}${location.search}`);
+  } catch (error) { tokenInput.value = ''; toast(error.message, 8500); }
+  finally { state.cloudBusy = false; renderCloudStatus(); }
+}
+
 async function completeDriveConnection(auth, authorization, settingsSaved) {
   try {
     await Promise.all([authorization, settingsSaved]);
@@ -581,8 +607,16 @@ async function refreshBackendSessions() {
 
 async function restoreBackendSession() {
   state.backend = new PocketBackendClient();
+  try {
+    state.backendOwner = await state.backend.ownerStatus(); state.backendAvailable = true;
+  } catch (error) {
+    if (error.code !== 'backend_unavailable' && !(error instanceof TypeError)) throw error;
+    state.backendAvailable = false; state.backendOwner = null;
+    if (isValidGoogleClientId(state.cloudSettings.clientId)) preloadGoogleIdentity();
+    return;
+  }
+  if (!state.backendOwner.configured) { state.backendSession = null; renderCloudStatus(); return; }
   const detected = await state.backend.detectSession(); state.backendAvailable = detected.available; state.backendSession = detected.session;
-  if (!detected.available) { if (isValidGoogleClientId(state.cloudSettings.clientId)) preloadGoogleIdentity(); return; }
   if (!detected.session) { renderCloudStatus(); return; }
   state.drive = new BackendDriveApi(state.backend); state.workspace = await state.drive.ensureWorkspace();
   state.backupService = new CloudBackupService(state.drive, state.workspace); state.aiExchange = new CloudAiExchange(state.drive, state.workspace); state.syncService = new CloudSyncService(state.drive, state.workspace);
@@ -763,6 +797,7 @@ function bindEvents() {
   $('#export-backup').addEventListener('click', exportBackup); $('#import-backup').addEventListener('click', () => $('#backup-file').click()); $('#backup-file').addEventListener('change', importBackupFile); $('#confirm-import').addEventListener('click', confirmImport);
   $('#export-ai').addEventListener('click', exportForCodex); $('#import-ai').addEventListener('click', () => $('#organized-file').click()); $('#organized-file').addEventListener('change', importOrganized); $('#apply-ai').addEventListener('click', applyOrganized); $('#undo-ai').addEventListener('click', undoAi);
   $('#cloud-connect').addEventListener('click', connectDrive); $('#cloud-disconnect').addEventListener('click', disconnectDrive);
+  $('#owner-bootstrap').addEventListener('click', bootstrapBackendOwner);
   $('#cloud-revoke-grant').addEventListener('click', revokeCloudGrant); $('#refresh-device-sessions').addEventListener('click', refreshBackendSessions);
   $('#google-client-id').addEventListener('input', event => { if (state.googleIdentityStatus === 'ready' && isValidGoogleClientId(event.target.value.trim())) prepareGoogleAuth(event.target.value.trim()); });
   $('#cloud-save-settings').addEventListener('click', async () => { await saveCloudSettingsFromForm(); renderCloudStatus(); toast('雲端設定已保存；密碼只保留到本頁關閉'); });

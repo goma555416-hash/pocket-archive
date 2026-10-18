@@ -18,14 +18,16 @@ Static Assets 命中時不執行 Worker；只有 `/api/*` 使用 Worker。Drive 
 
 ## OAuth 與持續登入
 
+- 後端是單一擁有者服務：以簽章驗證後的 Google `sub` 比對 `OWNER_GOOGLE_SUB`，或用 10 分鐘一次性 bootstrap grant 首次原子綁定 D1。未設定即 fail closed；未授權 callback 在建立 user、credential、Session 前終止，並 best-effort 撤銷剛取得的 Google token。
+- `/api/auth/start` 在寫入 OAuth attempt 前先確認 owner policy，並以來源 IP 做 D1 固定視窗限速；這降低單一來源濫用，正式公開 origin 仍應配合 Cloudflare 邊緣限速。
 - 使用 Google Web Server Authorization Code flow、`state`、PKCE S256、OIDC `nonce`。
 - 回呼以 Google JWKS 驗證 ID Token 的 RS256 簽章、issuer、audience、時間、nonce、`email_verified`。
 - Scope 保持 `openid email profile` + `drive.file`；不升級整個 Drive。
 - Client Secret 只放 Worker Secret。Refresh Token 與短效 Access Token以 AES-256-GCM 加密後放 D1；瀏覽器只取得不透明 Session cookie。
 - Refresh Token rotation 時，以同一更新路徑保存 Google 新回傳的 token；`invalid_grant` 會標記 `reauth_required`，不會刪除 IndexedDB。
-- Session cookie 為 `Secure; HttpOnly; SameSite=Lax; Path=/`。預設 idle 14 天、absolute 30 天、每 24 小時 rotation，前一 ID 只保留 5 分鐘併發寬限。
+- Session cookie 為 `Secure; HttpOnly; SameSite=Lax; Path=/`。預設 idle 14 天、absolute 30 天、每 24 小時 rotation，前一 ID 只保留 5 分鐘併發寬限。所有 authenticated route（含 Drive proxy 與錯誤回應）都傳遞新 Cookie；併行舊 Cookie 請求會從加密保存的當前 rotation token 收斂到同一 ID。資料庫更新要求 Session 尚未撤銷，因此輪替不會復活撤銷的工作階段。
 - 寫入 API 要求同來源、`Sec-Fetch-Site` 檢查與 double-submit CSRF token。OAuth attempt 10 分鐘到期且只能使用一次。
-- UI 可登出目前裝置、撤銷指定裝置或撤銷 Google grant 與全部工作階段。
+- UI 可登出目前裝置、撤銷指定裝置或撤銷 Google grant 與全部工作階段。完整撤銷會刪除 OAuth credential row，因此 Refresh Token 密文不會留在 D1；獨立的捷徑憑證需由快速收藏設定逐一管理。
 
 「持續登入」不是永久登入。Session 過期、使用者/Workspace 管理員撤銷、Google `invalid_grant`、Refresh Token 到期或安全策略要求時，App 會要求重新登入。
 
@@ -43,7 +45,7 @@ External 且 Publishing status 為 **Testing** 的專案，如果取得 `drive.f
 
 1. 保留舊 key 為 `TOKEN_ENCRYPTION_KEY_PREVIOUS`，設定其 version。
 2. 產生新 key，提升 `TOKEN_ENCRYPTION_KEY_VERSION` 並部署。
-3. 新登入與下一次 token refresh 會以新 key 寫入；確認所有有效 grant 已更新後才刪除 previous key。
+3. 新登入與下一次成功 Drive 存取會以新 key 重新加密 Access/Refresh Token；不必等 Access Token 到期。確認所有有效 grant 已更新後才刪除 previous key。
 4. 刪除舊 key 前先做 D1 備份；遺失仍被資料引用的 key 只能要求使用者重新授權。
 
 所有錯誤回應均不回傳 token、authorization code、cookie 或 Google 原始敏感內容；正式環境不可記錄 request headers/body。
