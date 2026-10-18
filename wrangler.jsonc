@@ -12,12 +12,12 @@
     {
       "binding": "DB",
       "database_name": "pocket-archive",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "8db0c270-eae9-4da2-9347-e0ae5219ca8f",
       "migrations_dir": "worker/migrations"
     }
   ],
   "vars": {
-    "APP_ORIGIN": "http://localhost:8787",
+    "APP_ORIGIN": "https://pocket-archive.goma555416.workers.dev",
     "TOKEN_ENCRYPTION_KEY_VERSION": "1",
     "SESSION_IDLE_DAYS": "14",
     "SESSION_ABSOLUTE_DAYS": "30"
