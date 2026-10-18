@@ -18,6 +18,9 @@ test('Service Worker 離線清單中的本機資源都存在', async () => {
   const resources = [...list.matchAll(/'\.\/(.*?)'/g)].map(match => match[1] || 'index.html');
   assert.ok(resources.includes('db.mjs'));
   assert.ok(resources.includes('archive.mjs'));
+  assert.ok(resources.includes('drive.mjs'));
+  assert.ok(resources.includes('sync.mjs'));
+  assert.ok(resources.includes('cloud.mjs'));
   await Promise.all(resources.filter(Boolean).map(file => access(resolve(new URL('..', import.meta.url).pathname, file))));
 });
 

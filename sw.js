@@ -1,5 +1,5 @@
-const CACHE = 'pocket-archive-v2.0.0';
-const RESOURCES = ['./','./index.html','./styles.css','./theme.css','./app.js','./lib.mjs','./db.mjs','./archive.mjs','./manifest.webmanifest','./icons/icon.svg','./icons/icon-180.png','./icons/icon-192.png','./icons/icon-512.png'];
+const CACHE = 'pocket-archive-v2.1.0';
+const RESOURCES = ['./','./index.html','./styles.css','./theme.css','./app.js','./lib.mjs','./db.mjs','./archive.mjs','./drive.mjs','./crypto.mjs','./sync.mjs','./cloud.mjs','./manifest.webmanifest','./icons/icon.svg','./icons/icon-180.png','./icons/icon-192.png','./icons/icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(RESOURCES)).then(() => self.skipWaiting()));
 });

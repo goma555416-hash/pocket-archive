@@ -27,7 +27,7 @@
         <button class="nav-button" data-view="archived" type="button"><span>▤</span> 已封存 <b id="nav-count-archived">0</b></button>
         <button class="nav-button" data-view="all" type="button"><span>▦</span> 全部收藏 <b id="nav-count-all">0</b></button>
       </nav>
-      <div class="side-bottom"><p>收藏值得留下的，<br />其他的慢慢整理。</p><span class="version">LOCAL FIRST · V2</span></div>
+      <div class="side-bottom"><p>收藏值得留下的，<br />其他的慢慢整理。</p><span class="version">LOCAL FIRST · V2.1</span></div>
     </aside>
 
     <div class="workspace">
@@ -37,6 +37,7 @@
         <div class="topbar-actions">
           <button class="button ghost small" id="ai-button" type="button">Codex 整理</button>
           <button class="button ghost small" id="backup-button" type="button">備份／還原</button>
+          <button class="button ghost small" id="cloud-button" type="button">Drive 同步</button>
         </div>
       </header>
 
@@ -60,7 +61,7 @@
           <div class="stat"><span class="stat-name">總收藏</span><strong id="stat-all">0</strong><span class="stat-unit">COLLECTED</span></div>
           <div class="stat"><span class="stat-name">待整理</span><strong id="stat-inbox">0</strong><span class="stat-unit">INBOX</span></div>
           <div class="stat"><span class="stat-name">已整理</span><strong id="stat-saved">0</strong><span class="stat-unit">ORGANIZED</span></div>
-          <div class="stat tip"><span aria-hidden="true">✳</span><p id="storage-summary">資料只存在這個瀏覽器。<br />請定期下載完整備份。</p></div>
+          <div class="stat tip"><span aria-hidden="true">✳</span><p id="storage-summary">本機優先儲存。<br />可選擇連結 Drive 備份。</p></div>
         </section>
 
         <section class="collection-section" aria-label="收藏內容">
@@ -78,7 +79,7 @@
           <div id="cards" class="cards-grid" aria-live="polite"></div>
           <div id="empty-state" class="empty-state" hidden><div class="empty-graphic" aria-hidden="true">✦</div><h3 id="empty-title">這裡還沒有收藏</h3><p id="empty-message">看到喜歡的東西，就先把它放進來。</p><button class="button outline" id="empty-add" type="button">＋ 新增第一筆收藏</button></div>
         </section>
-        <footer class="footer"><span>POCKET ARCHIVE · MADE FOR ONE</span><span>IndexedDB 本機儲存 · 無帳號 · 無自動上傳</span></footer>
+        <footer class="footer"><span>POCKET ARCHIVE · MADE FOR ONE</span><span>IndexedDB 本機優先 · Drive 連線完全選用</span></footer>
       </main>
     </div>
   </div>
@@ -126,10 +127,33 @@
     </div>
   </dialog>
 
+  <dialog id="cloud-dialog" aria-labelledby="cloud-heading" class="wide-dialog">
+    <div class="entry-form">
+      <div class="modal-heading"><div><div class="eyebrow subtle">OPTIONAL CLOUD SYNC</div><h2 id="cloud-heading">Google Drive 同步</h2></div><button type="button" data-close="cloud-dialog" class="icon-button" aria-label="關閉">✕</button></div>
+      <div id="cloud-status" class="cloud-status" aria-live="polite"><strong>尚未連結 Google Drive</strong><span>本機收藏仍可完整使用。</span></div>
+      <p class="privacy-note">只要求 <code>drive.file</code>，僅能管理 Pocket Archive 由此 OAuth App 建立或明確授權的檔案。Access Token 只存在頁面記憶體，不寫入 IndexedDB、localStorage 或 Git。</p>
+      <label>Google OAuth Web Client ID <small>公開設定，不是 Client Secret；需先在 Google Cloud 設定本站 HTTPS 來源。</small><input id="google-client-id" type="text" inputmode="text" autocomplete="off" placeholder="123456789-….apps.googleusercontent.com" /></label>
+      <div class="form-row">
+        <label>保留歷史備份數<input id="cloud-retention" type="number" min="1" max="30" value="5" /></label>
+        <label class="check-label"><input id="cloud-auto-backup" type="checkbox" checked /> App 開啟且連線時自動備份</label>
+      </div>
+      <label class="check-label"><input id="cloud-encryption" type="checkbox" /> 上傳前以密碼加密備份（AES-256-GCM）</label>
+      <label id="cloud-passphrase-row" hidden>本次工作階段的加密密碼 <small>至少 12 字元，不會永久保存；遺失後任何人都無法還原。</small><input id="cloud-passphrase" type="password" minlength="12" autocomplete="new-password" /></label>
+      <div class="action-stack horizontal"><button id="cloud-save-settings" type="button" class="button ghost">保存設定</button><button id="cloud-connect" type="button" class="button primary">連結 Google Drive</button><button id="cloud-disconnect" type="button" class="button outline" hidden>中斷連線（保留本機資料）</button></div>
+      <div class="cloud-actions"><button id="cloud-sync-now" data-requires-cloud type="button" class="button primary" disabled>立即雙向同步</button><button id="cloud-backup-now" data-requires-cloud type="button" class="button outline" disabled>立即完整備份</button><button id="cloud-refresh-backups" data-requires-cloud type="button" class="button ghost" disabled>更新備份清單</button></div>
+      <p id="cloud-backup-note" class="privacy-note" aria-live="polite"></p>
+      <section class="cloud-section" aria-labelledby="backup-history-heading"><h3 id="backup-history-heading">歷史備份</h3><div id="cloud-backup-list"><p class="privacy-note">連結後顯示由 Pocket Archive 建立的備份。</p></div></section>
+      <section class="cloud-section" aria-labelledby="sync-conflict-heading"><h3 id="sync-conflict-heading">同步衝突</h3><div id="sync-conflicts"><p class="privacy-note">目前沒有待處理的同步衝突。</p></div></section>
+    </div>
+  </dialog>
+
   <dialog id="ai-dialog" aria-labelledby="ai-heading" class="wide-dialog">
-    <div class="entry-form"><div class="modal-heading"><div><div class="eyebrow subtle">MANUAL CODEX WORKFLOW</div><h2 id="ai-heading">Codex 批次整理</h2></div><button type="button" data-close="ai-dialog" class="icon-button" aria-label="關閉">✕</button></div>
-      <ol class="workflow"><li>選取項目（未選時使用全部待整理）並匯出；含圖片會產生 ZIP。</li><li>依 <code>CODEX-ORGANIZE-PROMPT.md</code> 在本機 Codex CLI 或你明確選擇的 Codex Cloud 處理。</li><li>匯入 <code>organized.json</code>，逐項預覽後才套用；原始網址、備註與附件永不覆寫。</li></ol>
-      <div class="action-stack horizontal"><button id="export-ai" type="button" class="button primary">匯出待整理批次</button><button id="import-ai" type="button" class="button outline">匯入 organized.json</button></div><div id="ai-preview" class="preview-panel" aria-live="polite"></div><div class="modal-footer"><button id="apply-ai" type="button" class="button primary" hidden>套用勾選建議</button></div>
+    <div class="entry-form"><div class="modal-heading"><div><div class="eyebrow subtle">CODEX ON DEMAND</div><h2 id="ai-heading">Codex 批次整理</h2></div><button type="button" data-close="ai-dialog" class="icon-button" aria-label="關閉">✕</button></div>
+      <ol class="workflow"><li>選取項目；未選時使用全部待整理收藏。</li><li>已連結 Drive 時送到 AI-Inbox，再於 Codex 輸入「整理 Pocket Archive 最新的待整理收藏。」</li><li>App 取得结果後先驗證與預覽；原始網址、備註及附件永不覆寫。</li></ol>
+      <div class="action-stack horizontal"><button id="ai-cloud-export" data-requires-cloud type="button" class="button primary" disabled>送到 Drive AI-Inbox</button><button id="ai-cloud-check" data-requires-cloud type="button" class="button outline" disabled>檢查 Drive 整理結果</button></div>
+      <p id="ai-cloud-status" class="privacy-note" aria-live="polite">未連結 Drive 時仍可使用下方檔案流程。</p>
+      <details><summary>離線／手動檔案流程</summary><div class="action-stack horizontal details-actions"><button id="export-ai" type="button" class="button ghost">下載待整理批次</button><button id="import-ai" type="button" class="button ghost">匯入 organized.json</button></div></details>
+      <div id="ai-preview" class="preview-panel" aria-live="polite"></div><div class="modal-footer"><button id="apply-ai" type="button" class="button primary" hidden>套用勾選建議</button></div>
     </div>
   </dialog>
 
