@@ -1,5 +1,7 @@
 # Google Drive / OAuth 最小設定
 
+> v2.2 正式模式改採同來源 Worker Authorization Code flow；先看 [CLOUDFLARE-SETUP.md](./CLOUDFLARE-SETUP.md)。下列 GIS Token Model 步驟只保留給舊 GitHub Pages 相容／回滾模式。
+
 只有 Google 帳號擁有者能完成以下步驟；Repository 不需要也不應保存 Client Secret、Access Token 或 refresh token。
 
 1. 到 [Google Cloud Console](https://console.cloud.google.com/) 建立或選擇專案。
