@@ -54,7 +54,20 @@ try {
   assert.ok(version.Browser.includes('Chrome'));
   const target = await fetch(`${DEBUG}/json/new?about:blank`, { method: 'PUT' }).then(response => response.json());
   cdp = new Cdp(target.webSocketDebuggerUrl); await cdp.send('Page.enable'); await cdp.send('Runtime.enable'); await cdp.send('Network.enable');
-  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('pocket-archive:entries:v1', JSON.stringify([{id:'legacy-e2e',url:'https://legacy.example.com/item',title:'舊版收藏',note:'保留我',type:'文章',status:'inbox',tags:['舊版']}]))` });
+  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `
+    localStorage.setItem('pocket-archive:entries:v1', JSON.stringify([{id:'legacy-e2e',url:'https://legacy.example.com/item',title:'舊版收藏',note:'保留我',type:'文章',status:'inbox',tags:['舊版']}]))
+    window.__oauthGestureTest = { phase: 'idle', requests: [], inits: 0 };
+    window.google = { accounts: { oauth2: {
+      initTokenClient(config) {
+        window.__oauthGestureTest.inits += 1;
+        return { requestAccessToken(options) {
+          window.__oauthGestureTest.requests.push({ phase: window.__oauthGestureTest.phase, active: navigator.userActivation?.isActive === true, prompt: options?.prompt });
+          config.error_callback({ type: 'popup_closed' });
+        } };
+      },
+      revoke(_token, done) { done(); }
+    } } };
+  ` });
   await cdp.send('Page.navigate', { url: HOST });
   await waitFor(() => cdp.evaluate('window.__PA_READY__ === true'), 'App 初始化');
   process.stdout.write('E2E：App 與 v1 遷移已啟動\n');
@@ -115,7 +128,7 @@ try {
   await cdp.evaluate(`(() => {
     document.querySelectorAll('dialog[open]').forEach(dialog=>dialog.close());
     document.querySelector('#cloud-button').click();
-    document.querySelector('#google-client-id').value='123456-e2e.apps.googleusercontent.com';
+    const clientId=document.querySelector('#google-client-id'); clientId.value='123456-e2e.apps.googleusercontent.com'; clientId.dispatchEvent(new Event('input',{bubbles:true}));
     document.querySelector('#cloud-retention').value='7';
     const encryption=document.querySelector('#cloud-encryption'); encryption.checked=true; encryption.dispatchEvent(new Event('change',{bubbles:true}));
     document.querySelector('#cloud-save-settings').click();
@@ -126,6 +139,22 @@ try {
   const cloudSettings = await cdp.evaluate(`new Promise(resolve => { const request=indexedDB.open('pocket-archive'); request.onsuccess=()=>{ const tx=request.result.transaction('meta','readonly'); const get=tx.objectStore('meta').get('cloud-settings'); get.onsuccess=()=>resolve(get.result?.value||null); }; })`);
   assert.equal(cloudSettings.clientId, '123456-e2e.apps.googleusercontent.com'); assert.equal(cloudSettings.retention, 7); assert.equal(cloudSettings.encryption, true);
   process.stdout.write('E2E：Drive 未授權狀態、設定與加密 UI 通過\n');
+
+  const connectPoint = await cdp.evaluate(`(() => {
+    const button = document.querySelector('#cloud-connect'); button.scrollIntoView({ block: 'center' }); const rect = button.getBoundingClientRect();
+    window.__oauthGestureTest.phase = 'waiting'; window.__oauthGestureTest.requests = [];
+    button.addEventListener('click', event => { window.__oauthGestureTest.phase = event.isTrusted ? 'trusted-handler' : 'untrusted-handler'; }, { capture: true, once: true });
+    button.addEventListener('click', () => { window.__oauthGestureTest.phase = 'after-handler'; }, { once: true });
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  })()`);
+  assert.equal(await cdp.evaluate('window.__oauthGestureTest.inits > 0'), true, 'GIS token client 必須在 OAuth 點擊前初始化');
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...connectPoint, button: 'left', clickCount: 1 });
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...connectPoint, button: 'left', clickCount: 1 });
+  const oauthRequest = await waitFor(() => cdp.evaluate('window.__oauthGestureTest.requests[0] || null'), 'OAuth popup request');
+  assert.equal(oauthRequest.phase, 'trusted-handler', 'requestAccessToken 必須在受信任 click handler 返回前同步觸發');
+  assert.equal(oauthRequest.active, true, 'requestAccessToken 必須保有瀏覽器 transient user activation');
+  assert.equal(oauthRequest.prompt, 'consent');
+  process.stdout.write('E2E：OAuth popup 保留直接使用者手勢通過\n');
 
   const nativeFetch = await cdp.evaluate(`(async () => {
     const { DriveApi } = await import('./drive.mjs');
@@ -183,7 +212,7 @@ try {
   await waitFor(() => cdp.evaluate("Boolean(document.querySelector('#page-heading'))"), '離線啟動', 12000);
   await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
 
-  process.stdout.write('E2E 通過：遷移、單筆、批次、圖片、搜尋、備份、Codex 預覽/套用/復原、Drive 原生 fetch、390px、離線。\n');
+  process.stdout.write('E2E 通過：遷移、單筆、批次、圖片、搜尋、備份、Codex 預覽/套用/復原、OAuth popup 手勢、Drive 原生 fetch、390px、離線。\n');
 } finally {
   cdp?.close();
   if (browser && browser.exitCode === null) {

@@ -15,7 +15,7 @@ npm run test:e2e
 - Codex 匿名範例 schema：2 筆通過。
 - Node：5 個測試檔、37 個 `test()` case 通過。除原有 URL、圖片、IndexedDB migration、ZIP、AI schema、安全與 PWA 測試外，新增 OAuth token 失效/撤銷、Drive 401 與 503 retry、大檔 resumable upload、AES-GCM 往返/錯密碼/竄改、向量時鐘、刪除衝突、journal schema、備份回讀完整性/輪替、AI 占位檔、模擬 iPhone/Windows 雙向 journal + 圖片同步，以及收藏/附件同一 IndexedDB transaction 的成功、一般附件失敗與容量不足回滾。
 - 語法：`app.js`、`lib.mjs`、`db.mjs`、`archive.mjs`、`drive.mjs`、`crypto.mjs`、`sync.mjs`、`cloud.mjs`、`sw.js` 全部 `node --check` 通過。
-- Chromium E2E：實際通過 v1 migration、單筆/批次/圖片、搜尋、備份匯入、Codex export/預覽/套用/復原、Drive 未授權不得顯示成功、雲端設定與加密 UI、`DriveApi` 預設原生 `window.fetch` 的正確接收者與同來源 API 請求、真實 IndexedDB 附件 DataCloneError 時整筆 transaction 回滾、表單標籤/按鈕名稱、鍵盤操作、390×844 無水平溢出，以及 Service Worker 離線重新載入。E2E 需要允許本機 loopback socket；預設受限 sandbox 會在 HTTP server bind 時失敗，取得該測試所需網路權限後通過。
+- Chromium E2E：實際通過 v1 migration、單筆/批次/圖片、搜尋、備份匯入、Codex export/預覽/套用/復原、Drive 未授權不得顯示成功、雲端設定與加密 UI、受信任滑鼠事件中 `requestAccessToken()` 在 click handler 返回前同步觸發且保有 `navigator.userActivation.isActive`、`DriveApi` 預設原生 `window.fetch` 的正確接收者與同來源 API 請求、真實 IndexedDB 附件 DataCloneError 時整筆 transaction 回滾、表單標籤/按鈕名稱、鍵盤操作、390×844 無水平溢出，以及 Service Worker 離線重新載入。E2E 需要允許本機 loopback socket；預設受限 sandbox 會在 HTTP server bind 時失敗，取得該測試所需網路權限後通過。
 
 測試資料只使用 `example.com/.org/.net` 與 8-byte 匿名 PNG signature，沒有讀取或上傳真實收藏。
 
@@ -32,7 +32,7 @@ npm run test:e2e
 
 因此 Codex 連接器的 ZIP/JSON raw download 與同 file ID raw update 已實證，不只是搜尋能力。
 
-尚未驗證的是 PWA OAuth：目前沒有儲存庫擁有者的 Google OAuth Web Client ID，也不能代替使用者完成 consent screen。PWA 登入、真實 `drive.file` 資料夾建立、兩部實機及 PWA→Codex 跨 OAuth Client 全流程均標示為 **待授權驗證**，不以 mock 測試宣稱正式成功。
+依使用者於 v2.1.2 修正任務提供的實測結果，Windows PWA OAuth、Drive 工作區與完整備份已驗收通過；本自動化環境未重做該帳號測試。iPhone Safari／主畫面 PWA 的 GIS popup 與後續同步仍標示為 **待實機驗證**，不以 Chromium 測試宣稱 iPhone 正式成功。
 
 `DriveApi` 的預設瀏覽器 `fetch` 綁定已另以 Chromium 真實原生 API 回歸測試驗證，不需要 Token 或 Client Secret；此測試只向本機測試伺服器請求公開 manifest，不代表已完成 Google OAuth 帳號實機驗證。
 
@@ -40,8 +40,8 @@ npm run test:e2e
 
 | 範圍 | 狀態 | 實作 |
 | --- | --- | --- |
-| GIS OAuth、連結/重授權/撤銷、狀態 | 程式完成；待 Web Client 授權實測 | `drive.mjs`, `app.js`, `index.html` |
-| Drive 工作區與最小 `drive.file` | 程式完成；待 PWA 帳號實測 | `drive.mjs`, `GOOGLE-DRIVE-SETUP.md` |
+| GIS OAuth、連結/重授權/撤銷、狀態 | Windows 由使用者驗收；iPhone popup 待實機複驗 | `drive.mjs`, `app.js`, `index.html` |
+| Drive 工作區與最小 `drive.file` | Windows 由使用者驗收；iPhone 待實機複驗 | `drive.mjs`, `GOOGLE-DRIVE-SETUP.md` |
 | 自動歷史備份、回讀 SHA-256、還原預覽 | 完成；真實 PWA 上傳待授權 | `cloud.mjs`, `crypto.mjs`, `app.js` |
 | AES-256-GCM 用戶端加密 | 完成並通過錯密碼/竄改測試 | `crypto.mjs` |
 | 雙向增量同步、附件、tombstone、衝突選擇 | 完成並通過雙裝置模擬；實機待驗 | `sync.mjs`, `cloud.mjs`, `app.js` |
@@ -52,6 +52,7 @@ npm run test:e2e
 ## 已知限制
 
 - Access Token 只存記憶體，因此每次新的 PWA 工作階段需使用者點擊連結；不保存 refresh token 是刻意的安全界線。
+- GIS Token Model 官方只支援 dialog，沒有可直接切換的 redirect 模式。若特定 iOS standalone 版本即使直接點擊仍拒絕 popup，安全 redirect 備案需要獨立後端 Authorization Code flow，不能把 Client Secret 放進靜態 PWA。
 - 同步 journal/附件索引每次最多掃描 100 個檔案，足以涵蓋個人 iPhone/Windows 情境，不是大型團隊後端。
 - 已刪除收藏的雲端附件不自動清除，以保護尚未同步的離線裝置；後續可加入有寬限期、先預覽的 orphan cleanup。
 - 備份加密不套用到 Sync/AI 交換區；否則其他裝置與 Codex 無法在沒有密碼代理服務的前提下讀取。

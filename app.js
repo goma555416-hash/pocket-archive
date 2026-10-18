@@ -6,7 +6,7 @@ import {
 } from './lib.mjs';
 import { initRepository } from './db.mjs';
 import { createZip, readZip, decodeText } from './archive.mjs';
-import { GoogleAuthSession, DriveApi, isValidGoogleClientId } from './drive.mjs';
+import { GoogleAuthSession, DriveApi, isValidGoogleClientId, loadGoogleIdentity } from './drive.mjs';
 import { CloudBackupService, CloudAiExchange, CloudSyncService } from './cloud.mjs';
 import { recordLocalChanges, resolveConflict } from './sync.mjs';
 
@@ -18,7 +18,8 @@ const state = {
   deviceId: '', syncJournal: {}, tombstones: {}, cloudConflicts: [], cloudBackups: [], cloudJobs: [],
   cloudSettings: { clientId: '', autoBackup: true, retention: 5, encryption: false },
   cloudPassphrase: '', auth: null, drive: null, workspace: null, backupService: null, aiExchange: null, syncService: null,
-  cloudUser: null, cloudBusy: false, backupTimer: null, syncTimer: null
+  cloudUser: null, cloudBusy: false, backupTimer: null, syncTimer: null,
+  googleIdentityStatus: 'idle', googleIdentityPromise: null
 };
 const names = { inbox: ['收件匣', '尚未整理的收藏'], saved: ['已整理', '已經整理好的收藏'], archived: ['已封存', '暫時收起的收藏'], all: ['全部收藏', '這裡收著所有值得留下的事物'] };
 let toastTimer;
@@ -390,7 +391,9 @@ function renderCloudStatus() {
   status.innerHTML = connected
     ? `<strong>已連結 ${escapeHtml(state.cloudUser?.emailAddress || 'Google Drive')}</strong><span>最近同步：${escapeHtml(lastSync)} · 最近備份：${escapeHtml(lastBackup)}</span>`
     : '<strong>尚未連結 Google Drive</strong><span>本機收藏仍可完整使用；不會假裝已同步。</span>';
-  $('#cloud-connect').hidden = connected; $('#cloud-disconnect').hidden = !connected;
+  const connectButton = $('#cloud-connect'); connectButton.hidden = connected; connectButton.disabled = !connected && (state.cloudBusy || state.googleIdentityStatus === 'loading');
+  connectButton.textContent = state.googleIdentityStatus === 'loading' ? '正在準備 Google 登入…' : '連結 Google Drive';
+  $('#cloud-disconnect').hidden = !connected;
   $$('[data-requires-cloud]').forEach(button => { button.disabled = !connected || state.cloudBusy; });
   $('#cloud-passphrase-row').hidden = !$('#cloud-encryption')?.checked;
   renderConflicts();
@@ -406,7 +409,7 @@ function renderConflicts() {
   }).join('')}</ul>`;
 }
 
-async function saveCloudSettingsFromForm() {
+function cloudSettingsFromForm() {
   const clientId = $('#google-client-id').value.trim();
   const settings = {
     ...state.cloudSettings, clientId,
@@ -415,17 +418,70 @@ async function saveCloudSettingsFromForm() {
     encryption: $('#cloud-encryption').checked
   };
   state.cloudSettings = settings; state.cloudPassphrase = $('#cloud-passphrase').value;
-  await state.repository.setMeta('cloud-settings', settings);
+  return settings;
 }
 
-async function connectDrive() {
+async function saveCloudSettingsFromForm() {
+  const settings = cloudSettingsFromForm();
+  await state.repository.setMeta('cloud-settings', settings);
+  return settings;
+}
+
+function prepareGoogleAuth(clientId = $('#google-client-id')?.value.trim() || state.cloudSettings.clientId) {
+  if (!isValidGoogleClientId(clientId) || !globalThis.google?.accounts?.oauth2) return null;
+  if (!state.auth || state.auth.clientId !== clientId) state.auth = new GoogleAuthSession({ clientId, googleObject: globalThis.google });
+  else state.auth.prepare(globalThis.google);
+  return state.auth;
+}
+
+function preloadGoogleIdentity() {
+  if (state.googleIdentityStatus === 'ready') {
+    prepareGoogleAuth();
+    return Promise.resolve(globalThis.google);
+  }
+  if (state.googleIdentityStatus === 'loading' && state.googleIdentityPromise) return state.googleIdentityPromise;
+  state.googleIdentityStatus = 'loading'; renderCloudStatus();
+  const loading = loadGoogleIdentity().then(googleObject => {
+    state.googleIdentityStatus = 'ready';
+    prepareGoogleAuth();
+    renderCloudStatus();
+    return googleObject;
+  }).catch(error => {
+    state.googleIdentityStatus = 'error'; state.googleIdentityPromise = null;
+    renderCloudStatus();
+    throw error;
+  });
+  state.googleIdentityPromise = loading;
+  loading.catch(() => { /* connect button retries and reports the actionable error */ });
+  return loading;
+}
+
+function connectDrive() {
+  let authorization; let settingsSaved; let auth;
   try {
-    await saveCloudSettingsFromForm();
+    const settings = cloudSettingsFromForm();
     if (!isValidGoogleClientId(state.cloudSettings.clientId)) throw new Error('請先填入 Google OAuth Web Client ID');
+    auth = prepareGoogleAuth(state.cloudSettings.clientId);
+    if (!auth) {
+      preloadGoogleIdentity();
+      throw new Error('Google 登入元件仍在載入，請稍候後再點一次連結');
+    }
     state.cloudBusy = true; renderCloudStatus();
-    state.auth = new GoogleAuthSession({ clientId: state.cloudSettings.clientId });
-    await state.auth.connect({ prompt: 'consent' });
-    state.drive = new DriveApi({ getAccessToken: () => state.auth.getAccessToken() });
+    // requestAccessToken runs synchronously here, in the trusted click handler.
+    authorization = auth.connect({ prompt: 'consent' });
+    settingsSaved = state.repository.setMeta('cloud-settings', settings);
+  } catch (error) {
+    state.cloudBusy = false; renderCloudStatus(); toast(error.message, 8000);
+    return;
+  }
+  void completeDriveConnection(auth, authorization, settingsSaved);
+}
+
+async function completeDriveConnection(auth, authorization, settingsSaved) {
+  try {
+    await Promise.all([authorization, settingsSaved]);
+    state.auth = auth;
+    state.drive = new DriveApi({ getAccessToken: () => auth.getAccessToken() });
     state.workspace = await state.drive.ensureWorkspace();
     state.backupService = new CloudBackupService(state.drive, state.workspace);
     state.aiExchange = new CloudAiExchange(state.drive, state.workspace);
@@ -435,7 +491,7 @@ async function connectDrive() {
     toast('Google Drive 已連結；Token 僅保留在本次頁面記憶體');
     await refreshCloudBackups(); scheduleAutoBackup(800); scheduleAutoSync(1600);
   } catch (error) {
-    state.auth?.clear(); state.drive = null; state.workspace = null;
+    auth.clear(); state.drive = null; state.workspace = null;
     toast(error.message, 8000);
   } finally { state.cloudBusy = false; renderCloudStatus(); }
 }
@@ -582,7 +638,7 @@ function bindEvents() {
   $('#batch-button').addEventListener('click', () => { $('#batch-form').reset(); state.batch = []; $('#batch-preview').innerHTML = ''; $('#batch-save').disabled = true; openDialog('batch-dialog'); });
   $('#image-button').addEventListener('click', () => { $('#image-form').reset(); state.images = []; $('#image-preview').innerHTML = ''; $('#image-save').disabled = true; openDialog('image-dialog'); });
   $('#backup-button').addEventListener('click', () => { openDialog('backup-dialog'); updateStorageSummary(); }); $('#ai-button').addEventListener('click', () => openDialog('ai-dialog'));
-  $('#cloud-button').addEventListener('click', () => { openDialog('cloud-dialog'); renderCloudStatus(); if (cloudConnected()) refreshCloudBackups(); });
+  $('#cloud-button').addEventListener('click', () => { openDialog('cloud-dialog'); preloadGoogleIdentity(); renderCloudStatus(); if (cloudConnected()) refreshCloudBackups(); });
   $$('[data-close]').forEach(button => button.addEventListener('click', () => closeDialog(button.dataset.close)));
   $$('dialog').forEach(dialog => dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); }));
   $('#entry-form').addEventListener('submit', saveFromForm); $('#batch-form').addEventListener('submit', saveBatch); $('#image-form').addEventListener('submit', saveImages);
@@ -593,6 +649,7 @@ function bindEvents() {
   $('#export-backup').addEventListener('click', exportBackup); $('#import-backup').addEventListener('click', () => $('#backup-file').click()); $('#backup-file').addEventListener('change', importBackupFile); $('#confirm-import').addEventListener('click', confirmImport);
   $('#export-ai').addEventListener('click', exportForCodex); $('#import-ai').addEventListener('click', () => $('#organized-file').click()); $('#organized-file').addEventListener('change', importOrganized); $('#apply-ai').addEventListener('click', applyOrganized); $('#undo-ai').addEventListener('click', undoAi);
   $('#cloud-connect').addEventListener('click', connectDrive); $('#cloud-disconnect').addEventListener('click', disconnectDrive);
+  $('#google-client-id').addEventListener('input', event => { if (state.googleIdentityStatus === 'ready' && isValidGoogleClientId(event.target.value.trim())) prepareGoogleAuth(event.target.value.trim()); });
   $('#cloud-save-settings').addEventListener('click', async () => { await saveCloudSettingsFromForm(); renderCloudStatus(); toast('雲端設定已保存；密碼只保留到本頁關閉'); });
   $('#cloud-backup-now').addEventListener('click', () => runCloudBackup(false)); $('#cloud-sync-now').addEventListener('click', () => syncNow(false));
   $('#cloud-refresh-backups').addEventListener('click', refreshCloudBackups); $('#cloud-encryption').addEventListener('change', renderCloudStatus);
@@ -632,6 +689,7 @@ async function init() {
     state.cloudSettings = { ...state.cloudSettings, ...(await repository.getMeta('cloud-settings', {})) };
     $('#google-client-id').value = state.cloudSettings.clientId || ''; $('#cloud-auto-backup').checked = state.cloudSettings.autoBackup !== false;
     $('#cloud-retention').value = state.cloudSettings.retention || 5; $('#cloud-encryption').checked = Boolean(state.cloudSettings.encryption);
+    if (isValidGoogleClientId(state.cloudSettings.clientId)) preloadGoogleIdentity();
     render(); updateStorageSummary(); handleLegacyShareQuery();
     if (migration?.imported) toast(`已安全複製 ${migration.imported} 筆舊版收藏到 IndexedDB；原始資料仍保留`);
     if (migration?.errors?.length || migration?.error) toast('部分舊版資料無法遷移；原始 localStorage 未刪除，請先下載備份', 8000);

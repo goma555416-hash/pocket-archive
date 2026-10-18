@@ -51,6 +51,7 @@ python -m http.server 5173
 先依 [GOOGLE-DRIVE-SETUP.md](./GOOGLE-DRIVE-SETUP.md) 建立 OAuth Web Client，然後開啟「Drive 同步」貼入 Client ID 並連結。Client ID 是公開設定；不要建立或貼入 Client Secret。
 
 - iPhone 與 Windows 必須使用同一 Client ID、同一 Google 帳號。
+- iPhone 開啟「Drive 同步」後，若按鈕顯示「正在準備 Google 登入…」，請等待它恢復成「連結 Google Drive」再直接點一下；App 會在點擊事件內立即開啟 Google 授權視窗。
 - Access Token 不持久化。重新開啟 App 後需再次點擊連結；本機資料不受影響。
 - 連結後資料變更會延遲備份與同步；回到前景或網路恢復會補傳。App 關閉期間不宣稱能在 iOS 背景運作。
 - 同時修改不會靜默覆蓋；「Drive 同步」的衝突區可選擇保留版本。
