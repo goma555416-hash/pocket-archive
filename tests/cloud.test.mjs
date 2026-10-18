@@ -1,21 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GoogleAuthSession, DriveApi, DriveApiError } from '../drive.mjs';
+import { DRIVE_SCOPE, GoogleAuthSession, DriveApi, DriveApiError } from '../drive.mjs';
 import { encryptBackup, decryptBackup } from '../crypto.mjs';
 import { createEntry, createImageEntry, sha256, validatedEntry } from '../lib.mjs';
 import { compareClocks, createJournal, readJournal, recordLocalChanges, reconcileReplica, resolveConflict } from '../sync.mjs';
 import { CloudBackupService, CloudAiExchange, CloudSyncService, createBackupArtifact } from '../cloud.mjs';
 
-test('Google OAuth token 僅存於工作階段，失效與撤銷都會清除', async () => {
-  let callback; let requested; let revoked = '';
+test('Google OAuth 預先初始化、同步觸發 popup，token 僅存於工作階段且撤銷會清除', async () => {
+  let callback; let requested; let revoked = ''; let initialized;
   const googleObject = { accounts: { oauth2: {
-    initTokenClient(options) { callback = options.callback; return { requestAccessToken(value) { requested = value; queueMicrotask(() => callback({ access_token: 'short-lived', expires_in: 120 })); } }; },
+    initTokenClient(options) { initialized = options; callback = options.callback; return { requestAccessToken(value) { requested = value; queueMicrotask(() => callback({ access_token: 'short-lived', expires_in: 120 })); } }; },
     revoke(token, done) { revoked = token; done(); }
   } } };
   let now = 1000;
   const auth = new GoogleAuthSession({ clientId: '123456-test.apps.googleusercontent.com', googleObject, now: () => now });
-  await auth.connect();
+  assert.equal(initialized.scope, DRIVE_SCOPE); assert.equal(initialized.include_granted_scopes, true);
+  const firstConnection = auth.connect();
   assert.deepEqual(requested, { prompt: 'consent' });
+  await firstConnection;
   assert.equal(auth.getAccessToken(), 'short-lived');
   now += 61_001;
   assert.throws(() => auth.getAccessToken(), /授權已失效/);

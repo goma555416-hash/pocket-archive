@@ -32,7 +32,7 @@ export async function loadGoogleIdentity(documentObject = globalThis.document) {
     script.defer = true;
     script.dataset.googleIdentity = 'true';
     script.onload = resolve;
-    script.onerror = () => reject(new Error('Google 登入元件載入失敗；請檢查網路或內容阻擋設定'));
+    script.onerror = () => { script.remove(); reject(new Error('Google 登入元件載入失敗；請檢查網路或內容阻擋設定')); };
     documentObject.head.append(script);
   });
   if (!globalThis.google?.accounts?.oauth2) throw new Error('Google 登入元件未正確初始化');
@@ -43,36 +43,67 @@ export class GoogleAuthSession {
   constructor({ clientId, googleObject = null, now = () => Date.now() } = {}) {
     if (!validClientId(clientId)) throw new Error('請輸入有效的 Google OAuth Web Client ID');
     this.clientId = clientId.trim();
-    this.googleObject = googleObject;
+    this.googleObject = null;
     this.now = now;
     this.token = null;
     this.expiresAt = 0;
     this.tokenClient = null;
+    this.pendingConnection = null;
+    const availableGoogle = googleObject || globalThis.google;
+    if (availableGoogle?.accounts?.oauth2) this.prepare(availableGoogle);
   }
 
-  async connect({ prompt = 'consent' } = {}) {
-    const googleObject = this.googleObject || await loadGoogleIdentity();
-    return new Promise((resolve, reject) => {
-      this.tokenClient = googleObject.accounts.oauth2.initTokenClient({
-        client_id: this.clientId,
-        scope: DRIVE_SCOPE,
-        include_granted_scopes: true,
-        callback: response => {
-          if (response?.error || !response?.access_token) {
-            this.clear();
-            reject(new Error(`Google 授權失敗：${response?.error_description || response?.error || '未取得存取權'}`));
-            return;
-          }
-          this.token = response.access_token;
-          this.expiresAt = this.now() + Math.max(0, Number(response.expires_in || 3600) - 60) * 1000;
-          resolve(this.status());
-        },
-        error_callback: error => {
+  prepare(googleObject = this.googleObject || globalThis.google) {
+    if (!googleObject?.accounts?.oauth2) throw new Error('Google 登入元件尚未準備完成');
+    if (this.tokenClient && this.googleObject === googleObject) return this;
+    this.googleObject = googleObject;
+    this.tokenClient = googleObject.accounts.oauth2.initTokenClient({
+      client_id: this.clientId,
+      scope: DRIVE_SCOPE,
+      include_granted_scopes: true,
+      callback: response => {
+        const pending = this.pendingConnection;
+        if (!pending) return;
+        this.pendingConnection = null;
+        if (response?.error || !response?.access_token) {
           this.clear();
-          reject(new Error(`Google 授權視窗失敗：${error?.type || '未知錯誤'}`));
+          pending.reject(new Error(`Google 授權失敗：${response?.error_description || response?.error || '未取得存取權'}`));
+          return;
         }
-      });
-      this.tokenClient.requestAccessToken({ prompt });
+        this.token = response.access_token;
+        this.expiresAt = this.now() + Math.max(0, Number(response.expires_in || 3600) - 60) * 1000;
+        pending.resolve(this.status());
+      },
+      error_callback: error => {
+        const pending = this.pendingConnection;
+        if (!pending) return;
+        this.pendingConnection = null;
+        this.clear();
+        const type = error?.type || '未知錯誤';
+        const guidance = type === 'popup_failed_to_open' ? '；請等待登入元件準備完成後，再直接點擊「連結 Google Drive」' : '';
+        pending.reject(new Error(`Google 授權視窗失敗：${type}${guidance}`));
+      }
+    });
+    return this;
+  }
+
+  async preload(documentObject = globalThis.document) {
+    if (this.tokenClient) return this;
+    return this.prepare(this.googleObject || await loadGoogleIdentity(documentObject));
+  }
+
+  connect({ prompt = 'consent' } = {}) {
+    if (!this.tokenClient) throw new Error('Google 登入元件仍在載入，請稍候後再點一次連結');
+    if (this.pendingConnection) throw new Error('Google 授權視窗已開啟，請先完成或關閉');
+    return new Promise((resolve, reject) => {
+      this.pendingConnection = { resolve, reject };
+      try {
+        // Must remain synchronous with the user's click for Safari/iOS popup permission.
+        this.tokenClient.requestAccessToken({ prompt });
+      } catch (error) {
+        this.pendingConnection = null;
+        reject(new Error(`Google 授權視窗失敗：${error?.message || '無法開啟'}`));
+      }
     });
   }
 
