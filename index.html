@@ -27,7 +27,7 @@
         <button class="nav-button" data-view="archived" type="button"><span>▤</span> 已封存 <b id="nav-count-archived">0</b></button>
         <button class="nav-button" data-view="all" type="button"><span>▦</span> 全部收藏 <b id="nav-count-all">0</b></button>
       </nav>
-      <div class="side-bottom"><p>收藏值得留下的，<br />其他的慢慢整理。</p><span class="version">LOCAL FIRST · V2.1.3</span></div>
+      <div class="side-bottom"><p>收藏值得留下的，<br />其他的慢慢整理。</p><span class="version">LOCAL FIRST · V2.2.0</span></div>
     </aside>
 
     <div class="workspace">
@@ -131,19 +131,26 @@
     <div class="entry-form">
       <div class="modal-heading"><div><div class="eyebrow subtle">OPTIONAL CLOUD SYNC</div><h2 id="cloud-heading">Google Drive 同步</h2></div><button type="button" data-close="cloud-dialog" class="icon-button" aria-label="關閉">✕</button></div>
       <div id="cloud-status" class="cloud-status" aria-live="polite"><strong>尚未連結 Google Drive</strong><span>本機收藏仍可完整使用。</span></div>
-      <p class="privacy-note">只要求 <code>drive.file</code>，僅能管理 Pocket Archive 由此 OAuth App 建立或明確授權的檔案。Access Token 只存在頁面記憶體，不寫入 IndexedDB、localStorage 或 Git。</p>
-      <label>Google OAuth Web Client ID <small>公開設定，不是 Client Secret；需先在 Google Cloud 設定本站 HTTPS 來源。</small><input id="google-client-id" type="text" inputmode="text" autocomplete="off" placeholder="123456789-….apps.googleusercontent.com" /></label>
+      <p class="privacy-note">只要求 <code>drive.file</code>。部署同來源後端時，Refresh Token 只以加密形式保存於 D1，Access Token 不交給瀏覽器；GitHub Pages 舊模式仍只把短效 Access Token 留在頁面記憶體。</p>
+      <section id="owner-bootstrap-section" class="cloud-section" aria-labelledby="owner-bootstrap-heading" hidden>
+        <h3 id="owner-bootstrap-heading">首次擁有者設定</h3>
+        <label id="owner-bootstrap-token-row">一次性綁定碼 <small>不會保存於瀏覽器；請勿放在網址、聊天或記錄中。</small><input id="owner-bootstrap-token" type="password" autocomplete="off" /></label>
+        <button id="owner-bootstrap" type="button" class="button primary">驗證並綁定此 Google 帳號</button>
+        <p id="owner-bootstrap-note" class="privacy-note" aria-live="polite"></p>
+      </section>
+      <label id="legacy-google-settings">Google OAuth Web Client ID <small>只有純靜態相容模式需要；公開設定，不是 Client Secret。</small><input id="google-client-id" type="text" inputmode="text" autocomplete="off" placeholder="123456789-….apps.googleusercontent.com" /></label>
       <div class="form-row">
         <label>保留歷史備份數<input id="cloud-retention" type="number" min="1" max="30" value="5" /></label>
         <label class="check-label"><input id="cloud-auto-backup" type="checkbox" checked /> App 開啟且連線時自動備份</label>
       </div>
       <label class="check-label"><input id="cloud-encryption" type="checkbox" /> 上傳前以密碼加密備份（AES-256-GCM）</label>
       <label id="cloud-passphrase-row" hidden>本次工作階段的加密密碼 <small>至少 12 字元，不會永久保存；遺失後任何人都無法還原。</small><input id="cloud-passphrase" type="password" minlength="12" autocomplete="new-password" /></label>
-      <div class="action-stack horizontal"><button id="cloud-save-settings" type="button" class="button ghost">保存設定</button><button id="cloud-connect" type="button" class="button primary">連結 Google Drive</button><button id="cloud-disconnect" type="button" class="button outline" hidden>中斷連線（保留本機資料）</button></div>
+      <div class="action-stack horizontal"><button id="cloud-save-settings" type="button" class="button ghost">保存設定</button><button id="cloud-connect" type="button" class="button primary">連結 Google Drive</button><button id="cloud-disconnect" type="button" class="button outline" hidden>登出此裝置（保留本機資料）</button><button id="cloud-revoke-grant" type="button" class="button ghost" hidden>撤銷 Google 授權與所有裝置</button></div>
       <div class="cloud-actions"><button id="cloud-sync-now" data-requires-cloud type="button" class="button primary" disabled>立即雙向同步</button><button id="cloud-backup-now" data-requires-cloud type="button" class="button outline" disabled>立即完整備份</button><button id="cloud-refresh-backups" data-requires-cloud type="button" class="button ghost" disabled>更新備份清單</button></div>
       <p id="cloud-backup-note" class="privacy-note" aria-live="polite"></p>
       <section class="cloud-section" aria-labelledby="backup-history-heading"><h3 id="backup-history-heading">歷史備份</h3><div id="cloud-backup-list"><p class="privacy-note">連結後顯示由 Pocket Archive 建立的備份。</p></div></section>
       <section class="cloud-section" aria-labelledby="sync-conflict-heading"><h3 id="sync-conflict-heading">同步衝突</h3><div id="sync-conflicts"><p class="privacy-note">目前沒有待處理的同步衝突。</p></div></section>
+      <section id="device-sessions-section" class="cloud-section" aria-labelledby="device-sessions-heading" hidden><h3 id="device-sessions-heading">已登入裝置</h3><button id="refresh-device-sessions" type="button" class="button ghost small">更新裝置清單</button><div id="device-sessions"><p class="privacy-note">正在取得工作階段…</p></div></section>
     </div>
   </dialog>
 

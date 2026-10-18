@@ -1,0 +1,12 @@
+.git
+.github
+attachments
+examples
+node_modules
+scripts
+tests
+worker
+*.md
+package-lock.json
+package.json
+wrangler.jsonc

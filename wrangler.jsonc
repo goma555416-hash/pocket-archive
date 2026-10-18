@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pocket-archive",
+  "main": "worker/src/index.mjs",
+  "compatibility_date": "2026-10-17",
+  "assets": {
+    "directory": ".",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pocket-archive",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "migrations_dir": "worker/migrations"
+    }
+  ],
+  "vars": {
+    "APP_ORIGIN": "http://localhost:8787",
+    "TOKEN_ENCRYPTION_KEY_VERSION": "1",
+    "SESSION_IDLE_DAYS": "14",
+    "SESSION_ABSOLUTE_DAYS": "30"
+  }
+}

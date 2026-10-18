@@ -1,6 +1,6 @@
 # Pocket Archive
 
-Pocket Archive 是給 iPhone／iOS Safari、主畫面 Web App 與 Windows 瀏覽器使用的 local-first 私人收藏收件匣。可保存一般網址、YouTube、Instagram／Threads／X 等社群連結及原始圖片；支援批次收件、分類、搜尋、完整備份，以及不接 AI API 的 Codex 按需批次整理。v2.1 可選擇連結 Google Drive，提供歷史備份、跨裝置同步與 AI 交換區；未連線時既有本機功能完全可用。
+Pocket Archive 是給 iPhone／iOS Safari、主畫面 Web App 與 Windows 瀏覽器使用的 local-first 私人收藏收件匣。可保存一般網址、YouTube、Instagram／Threads／X 等社群連結及原始圖片；支援批次收件、分類、搜尋、完整備份，以及不接 AI API 的 Codex 按需批次整理。v2.2 可用同來源 Cloudflare Worker 安全保存 Google 長期授權並自動恢復工作階段；未部署後端或暫時離線時，既有本機功能仍完整可用。
 
 視覺維持既定 Minimal & Modern、Butter Yellow `#FFF2C9` × Periwinkle `#CBD7EF` 與 A3 實心書籤 Icon。
 
@@ -12,7 +12,7 @@ Pocket Archive 是給 iPhone／iOS Safari、主畫面 Web App 與 Windows 瀏覽
 - IndexedDB 保存紀錄和 Blob；v1 `localStorage` 只複製遷移，絕不自動刪除舊資料。容量或權限失敗時，資料庫交易會回滾並提示備份。
 - 無附件下載版本化 JSON；有附件下載 ZIP。還原前驗證 schema、大小、ZIP 路徑、附件 MIME／簽章／雜湊、ID 衝突，並先預覽合併結果。
 - 人工觸發 Codex 整理：本機檔案流程或使用者明確按下的 Drive AI-Inbox 流程 → 逐項差異預覽 → 勾選套用 → 單次復原。App 不含 AI API，也不會在未連結／未送出工作前上傳 AI 批次。
-- 選用 Google Drive：GIS OAuth + 最小 `drive.file`、短效 token 僅存記憶體；App 開啟時自動補傳、變更後延遲備份/同步、斷線重試，絕不假裝有 iOS 關閉後背景同步。
+- 選用 Google Drive：同來源 Worker 採 Authorization Code + PKCE、最小 `drive.file`、加密 Refresh Token 與 HttpOnly Session；App 開啟時自動恢復並補傳。GitHub Pages 保留 v2.1 的短效 token 相容模式。
 - 雲端完整備份保留 1–30 份歷史，寫入後回讀 SHA-256；可選 PBKDF2 + AES-256-GCM 用戶端加密，還原仍先預覽。
 - 跨裝置同步使用每裝置 journal、向量時鐘、delete tombstone 與可選版本的衝突面板，不以最後寫入者整庫覆蓋。
 - v2.1.3 會合併由同一份 ZIP 建立的相同因果版本；tombstone 只在能證明並行 upsert 是被刪除的同一內容時自動收斂，真正的刪除／編輯仍交由使用者選擇，且已被較新版本取代的舊衝突不再可重新發布。
@@ -49,11 +49,11 @@ python -m http.server 5173
 
 ### Google Drive 連線、備份與同步
 
-先依 [GOOGLE-DRIVE-SETUP.md](./GOOGLE-DRIVE-SETUP.md) 建立 OAuth Web Client，然後開啟「Drive 同步」貼入 Client ID 並連結。Client ID 是公開設定；不要建立或貼入 Client Secret。
+正式 v2.2 先依 [CLOUDFLARE-SETUP.md](./CLOUDFLARE-SETUP.md) 建立同來源 Worker、D1 與 OAuth callback。Client Secret 只放 Worker Secret，不得貼入 App 或 Git。架構與限制見 [ARCHITECTURE-V2.2.md](./ARCHITECTURE-V2.2.md)。
 
 - iPhone 與 Windows 必須使用同一 Client ID、同一 Google 帳號。
 - iPhone 開啟「Drive 同步」後，若按鈕顯示「正在準備 Google 登入…」，請等待它恢復成「連結 Google Drive」再直接點一下；App 會在點擊事件內立即開啟 Google 授權視窗。
-- Access Token 不持久化。重新開啟 App 後需再次點擊連結；本機資料不受影響。
+- Worker 模式會以安全 Session 自動恢復；Access Token 不交給瀏覽器。Session 或 Google grant 失效時才要求重新登入，本機資料不受影響。
 - 連結後資料變更會延遲備份與同步；回到前景或網路恢復會補傳。App 關閉期間不宣稱能在 iOS 背景運作。
 - 同時修改不會靜默覆蓋；「Drive 同步」的衝突區可選擇保留版本。
 - iPhone 的通知會避開底部導覽與安全區；Dialog 開啟時通知仍在 top layer 顯示，且不會取得焦點或阻擋點擊。

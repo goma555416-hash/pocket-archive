@@ -134,6 +134,7 @@ try {
     document.querySelector('#cloud-save-settings').click();
   })()`);
   assert.equal(await cdp.evaluate("document.querySelector('#cloud-status').textContent.includes('尚未連結')"), true, '未授權不得顯示同步成功');
+  assert.equal(await cdp.evaluate("!document.querySelector('#legacy-google-settings').hidden && document.querySelector('#owner-bootstrap-section').hidden"), true, '沒有 Worker API 的 Pages origin 必須保留 v2.1.3 OAuth fallback');
   assert.equal(await cdp.evaluate("document.querySelector('#cloud-sync-now').disabled && document.querySelector('#ai-cloud-export').disabled"), true, '未連線時雲端操作停用');
   assert.equal(await cdp.evaluate("!document.querySelector('#cloud-passphrase-row').hidden"), true, '加密選項顯示工作階段密碼');
   const cloudSettings = await cdp.evaluate(`new Promise(resolve => { const request=indexedDB.open('pocket-archive'); request.onsuccess=()=>{ const tx=request.result.transaction('meta','readonly'); const get=tx.objectStore('meta').get('cloud-settings'); get.onsuccess=()=>resolve(get.result?.value||null); }; })`);

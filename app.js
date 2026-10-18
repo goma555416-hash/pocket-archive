@@ -7,6 +7,7 @@ import {
 import { initRepository } from './db.mjs';
 import { createZip, readZip, decodeText } from './archive.mjs';
 import { GoogleAuthSession, DriveApi, isValidGoogleClientId, loadGoogleIdentity } from './drive.mjs';
+import { BackendDriveApi, PocketBackendClient, authResultFromLocation } from './backend.mjs';
 import { CloudBackupService, CloudAiExchange, CloudSyncService } from './cloud.mjs';
 import { pruneResolvedConflicts, recordLocalChanges, replicaRecord, resolveConflict } from './sync.mjs';
 
@@ -19,6 +20,7 @@ const state = {
   cloudSettings: { clientId: '', autoBackup: true, retention: 5, encryption: false },
   cloudPassphrase: '', auth: null, drive: null, workspace: null, backupService: null, aiExchange: null, syncService: null,
   cloudUser: null, cloudBusy: false, backupTimer: null, syncTimer: null,
+  backend: null, backendAvailable: false, backendOwner: null, backendSession: null, backendSessions: [],
   googleIdentityStatus: 'idle', googleIdentityPromise: null
 };
 const names = { inbox: ['收件匣', '尚未整理的收藏'], saved: ['已整理', '已經整理好的收藏'], archived: ['已封存', '暫時收起的收藏'], all: ['全部收藏', '這裡收著所有值得留下的事物'] };
@@ -425,7 +427,7 @@ async function readClipboardToBatch() {
   catch { openDialog('batch-dialog'); toast('剪貼簿無法讀取，請長按輸入框貼上'); }
 }
 
-function cloudConnected() { return Boolean(state.auth?.status().connected && state.drive && state.workspace); }
+function cloudConnected() { return Boolean(state.drive && state.workspace && (state.backendSession || state.auth?.status().connected)); }
 
 function renderCloudStatus() {
   const connected = cloudConnected();
@@ -435,10 +437,27 @@ function renderCloudStatus() {
   status.className = `cloud-status ${connected ? 'is-connected' : ''}`;
   status.innerHTML = connected
     ? `<strong>已連結 ${escapeHtml(state.cloudUser?.emailAddress || 'Google Drive')}</strong><span>最近同步：${escapeHtml(lastSync)} · 最近備份：${escapeHtml(lastBackup)}</span>`
-    : '<strong>尚未連結 Google Drive</strong><span>本機收藏仍可完整使用；不會假裝已同步。</span>';
-  const connectButton = $('#cloud-connect'); connectButton.hidden = connected; connectButton.disabled = !connected && (state.cloudBusy || state.googleIdentityStatus === 'loading');
-  connectButton.textContent = state.googleIdentityStatus === 'loading' ? '正在準備 Google 登入…' : '連結 Google Drive';
+    : `<strong>${state.backendAvailable ? '尚未登入 Google Drive' : '尚未連結 Google Drive'}</strong><span>本機收藏仍可完整使用；不會假裝已同步。</span>`;
+  const connectButton = $('#cloud-connect'); connectButton.hidden = connected; connectButton.disabled = !connected && (state.cloudBusy || (!state.backendAvailable && state.googleIdentityStatus === 'loading'));
+  if (state.backendAvailable && state.backendOwner && !state.backendOwner.configured) connectButton.disabled = true;
+  connectButton.textContent = state.backendAvailable ? '登入並連結 Google Drive' : state.googleIdentityStatus === 'loading' ? '正在準備 Google 登入…' : '連結 Google Drive';
   $('#cloud-disconnect').hidden = !connected;
+  $('#cloud-revoke-grant').hidden = !(connected && state.backendAvailable);
+  $('#legacy-google-settings').hidden = state.backendAvailable;
+  $('#device-sessions-section').hidden = !state.backendAvailable || !state.backendSession;
+  const ownerSetup = $('#owner-bootstrap-section');
+  if (ownerSetup) {
+    ownerSetup.hidden = !state.backendAvailable || !state.backendOwner || state.backendOwner.configured;
+    const note = $('#owner-bootstrap-note');
+    const button = $('#owner-bootstrap');
+    if (!ownerSetup.hidden) {
+      button.hidden = !state.backendOwner.bootstrapAvailable;
+      $('#owner-bootstrap-token-row').hidden = !state.backendOwner.bootstrapAvailable;
+      note.textContent = state.backendOwner.bootstrapAvailable
+        ? '輸入部署時設定的一次性綁定碼；驗證後會立即前往 Google，並以簽章驗證過的 sub 綁定唯一擁有者。'
+        : '登入預設關閉。請先依部署文件設定 OWNER_GOOGLE_SUB，或設定一次性 OWNER_BOOTSTRAP_TOKEN。';
+    }
+  }
   $$('[data-requires-cloud]').forEach(button => { button.disabled = !connected || state.cloudBusy; });
   $('#cloud-passphrase-row').hidden = !$('#cloud-encryption')?.checked;
   renderConflicts();
@@ -502,6 +521,10 @@ function preloadGoogleIdentity() {
 }
 
 function connectDrive() {
+  if (state.backendAvailable) {
+    state.backend.beginAuthorization(`${location.pathname}${location.search}`);
+    return;
+  }
   let authorization; let settingsSaved; let auth;
   try {
     const settings = cloudSettingsFromForm();
@@ -520,6 +543,18 @@ function connectDrive() {
     return;
   }
   void completeDriveConnection(auth, authorization, settingsSaved);
+}
+
+async function bootstrapBackendOwner() {
+  const tokenInput = $('#owner-bootstrap-token'); const token = tokenInput.value;
+  if (!token) { toast('請輸入一次性擁有者綁定碼'); return; }
+  state.cloudBusy = true; renderCloudStatus();
+  try {
+    const result = await state.backend.bootstrapOwner(token); tokenInput.value = '';
+    state.backendOwner = { ...state.backendOwner, bootstrapReady: Boolean(result.ready) };
+    state.backend.beginAuthorization(`${location.pathname}${location.search}`);
+  } catch (error) { tokenInput.value = ''; toast(error.message, 8500); }
+  finally { state.cloudBusy = false; renderCloudStatus(); }
 }
 
 async function completeDriveConnection(auth, authorization, settingsSaved) {
@@ -542,10 +577,52 @@ async function completeDriveConnection(auth, authorization, settingsSaved) {
 }
 
 async function disconnectDrive() {
+  if (state.backendAvailable && state.backendSession) {
+    try { await state.backend.logout(); } catch (error) { toast(error.message, 8000); return; }
+    state.backendSession = null;
+  } else {
   try { await state.auth?.disconnect(); } catch { /* local disconnect still succeeds */ }
+  }
   clearTimeout(state.backupTimer); clearTimeout(state.syncTimer); state.auth = null; state.drive = null; state.workspace = null;
   state.backupService = null; state.aiExchange = null; state.syncService = null; state.cloudUser = null;
   renderCloudStatus(); toast('已中斷 Google Drive；本機收藏完整保留');
+}
+
+async function revokeCloudGrant() {
+  if (!state.backendSession || !confirm('撤銷 Google Drive 授權並登出所有裝置？本機收藏不會刪除。')) return;
+  try {
+    await state.backend.revokeGrant(); state.backendSession = null; state.backendSessions = [];
+    state.drive = null; state.workspace = null; state.backupService = null; state.aiExchange = null; state.syncService = null; state.cloudUser = null;
+    renderCloudStatus(); toast('已撤銷 Google 授權與所有裝置工作階段；本機收藏完整保留');
+  } catch (error) { toast(`撤銷失敗：${error.message}`, 8000); }
+}
+
+async function refreshBackendSessions() {
+  if (!state.backendSession) return;
+  try {
+    const result = await state.backend.listSessions(); state.backendSessions = result.sessions || [];
+    $('#device-sessions').innerHTML = state.backendSessions.length ? `<ul class="preview-list">${state.backendSessions.map(session => `<li><b>${escapeHtml(session.deviceName)}</b><span>${escapeHtml(new Date(session.lastSeenAt).toLocaleString('zh-TW'))}${session.id === result.currentSessionId ? ' · 此裝置' : ''}<button type="button" class="inline-button" data-revoke-session="${escapeHtml(session.id)}">撤銷</button></span></li>`).join('')}</ul>` : '<p class="privacy-note">沒有有效裝置工作階段。</p>';
+  } catch (error) { $('#device-sessions').textContent = `無法取得裝置清單：${error.message}`; }
+}
+
+async function restoreBackendSession() {
+  state.backend = new PocketBackendClient();
+  try {
+    state.backendOwner = await state.backend.ownerStatus(); state.backendAvailable = true;
+  } catch (error) {
+    if (error.code !== 'backend_unavailable' && !(error instanceof TypeError)) throw error;
+    state.backendAvailable = false; state.backendOwner = null;
+    if (isValidGoogleClientId(state.cloudSettings.clientId)) preloadGoogleIdentity();
+    return;
+  }
+  if (!state.backendOwner.configured) { state.backendSession = null; renderCloudStatus(); return; }
+  const detected = await state.backend.detectSession(); state.backendAvailable = detected.available; state.backendSession = detected.session;
+  if (!detected.session) { renderCloudStatus(); return; }
+  state.drive = new BackendDriveApi(state.backend); state.workspace = await state.drive.ensureWorkspace();
+  state.backupService = new CloudBackupService(state.drive, state.workspace); state.aiExchange = new CloudAiExchange(state.drive, state.workspace); state.syncService = new CloudSyncService(state.drive, state.workspace);
+  state.cloudUser = { emailAddress: detected.session.user?.email, displayName: detected.session.user?.displayName };
+  await state.repository.setMeta('drive-workspace', state.workspace); await refreshBackendSessions();
+  renderCloudStatus(); scheduleAutoBackup(900); scheduleAutoSync(1500);
 }
 
 function scheduleAutoBackup(delayMs = 6000) {
@@ -703,7 +780,7 @@ function bindEvents() {
   $('#batch-button').addEventListener('click', () => { $('#batch-form').reset(); state.batch = []; $('#batch-preview').innerHTML = ''; $('#batch-save').disabled = true; openDialog('batch-dialog'); });
   $('#image-button').addEventListener('click', () => { $('#image-form').reset(); state.images = []; $('#image-preview').innerHTML = ''; $('#image-save').disabled = true; openDialog('image-dialog'); });
   $('#backup-button').addEventListener('click', () => { openDialog('backup-dialog'); updateStorageSummary(); }); $('#ai-button').addEventListener('click', () => openDialog('ai-dialog'));
-  $('#cloud-button').addEventListener('click', () => { openDialog('cloud-dialog'); preloadGoogleIdentity(); renderCloudStatus(); if (cloudConnected()) refreshCloudBackups(); });
+  $('#cloud-button').addEventListener('click', () => { openDialog('cloud-dialog'); if (!state.backendAvailable) preloadGoogleIdentity(); renderCloudStatus(); if (cloudConnected()) { refreshCloudBackups(); refreshBackendSessions(); } });
   $$('[data-close]').forEach(button => button.addEventListener('click', () => closeDialog(button.dataset.close)));
   $$('dialog').forEach(dialog => {
     dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
@@ -720,6 +797,8 @@ function bindEvents() {
   $('#export-backup').addEventListener('click', exportBackup); $('#import-backup').addEventListener('click', () => $('#backup-file').click()); $('#backup-file').addEventListener('change', importBackupFile); $('#confirm-import').addEventListener('click', confirmImport);
   $('#export-ai').addEventListener('click', exportForCodex); $('#import-ai').addEventListener('click', () => $('#organized-file').click()); $('#organized-file').addEventListener('change', importOrganized); $('#apply-ai').addEventListener('click', applyOrganized); $('#undo-ai').addEventListener('click', undoAi);
   $('#cloud-connect').addEventListener('click', connectDrive); $('#cloud-disconnect').addEventListener('click', disconnectDrive);
+  $('#owner-bootstrap').addEventListener('click', bootstrapBackendOwner);
+  $('#cloud-revoke-grant').addEventListener('click', revokeCloudGrant); $('#refresh-device-sessions').addEventListener('click', refreshBackendSessions);
   $('#google-client-id').addEventListener('input', event => { if (state.googleIdentityStatus === 'ready' && isValidGoogleClientId(event.target.value.trim())) prepareGoogleAuth(event.target.value.trim()); });
   $('#cloud-save-settings').addEventListener('click', async () => { await saveCloudSettingsFromForm(); renderCloudStatus(); toast('雲端設定已保存；密碼只保留到本頁關閉'); });
   $('#cloud-backup-now').addEventListener('click', () => runCloudBackup(false)); $('#cloud-sync-now').addEventListener('click', () => syncNow(false));
@@ -733,6 +812,7 @@ function bindEvents() {
   $('#bulk-edit-button').addEventListener('click', () => { $('#bulk-form').reset(); openDialog('bulk-dialog'); }); $('#bulk-form').addEventListener('submit', async event => { event.preventDefault(); const category = $('#bulk-category').value.trim(); const tags = cleanTags($('#bulk-tags').value); await updateEntries([...state.selected], entry => ({ ...entry, category: category || entry.category, tags: cleanTags([...entry.tags, ...tags]) }), '批次分類與標籤已更新'); closeDialog('bulk-dialog'); });
   document.addEventListener('change', event => { const input = event.target.closest('[data-select-id]'); if (!input) return; input.checked ? state.selected.add(input.dataset.selectId) : state.selected.delete(input.dataset.selectId); render(); });
   document.addEventListener('click', event => {
+    const revokeSessionButton = event.target.closest('[data-revoke-session]'); if (revokeSessionButton) { state.backend.revokeSession(revokeSessionButton.dataset.revokeSession).then(() => { toast('裝置工作階段已撤銷'); return refreshBackendSessions(); }).catch(error => toast(`撤銷失敗：${error.message}`, 8000)); return; }
     const restoreButton = event.target.closest('[data-cloud-restore]'); if (restoreButton) { previewCloudRestore(Number(restoreButton.dataset.cloudRestore)); return; }
     const conflictButton = event.target.closest('[data-conflict-choice]'); if (conflictButton) { handleConflictChoice(Number(conflictButton.dataset.conflictIndex), conflictButton.dataset.conflictChoice); return; }
     const view = event.target.closest('[data-view]'); if (view) { state.view = view.dataset.view; render(); return; }
@@ -760,8 +840,12 @@ async function init() {
     state.cloudSettings = { ...state.cloudSettings, ...(await repository.getMeta('cloud-settings', {})) };
     $('#google-client-id').value = state.cloudSettings.clientId || ''; $('#cloud-auto-backup').checked = state.cloudSettings.autoBackup !== false;
     $('#cloud-retention').value = state.cloudSettings.retention || 5; $('#cloud-encryption').checked = Boolean(state.cloudSettings.encryption);
-    if (isValidGoogleClientId(state.cloudSettings.clientId)) preloadGoogleIdentity();
-    render(); updateStorageSummary(); handleLegacyShareQuery();
+    const authResult = authResultFromLocation();
+    try { await restoreBackendSession(); }
+    catch (error) { state.backendAvailable = true; state.backendSession = null; toast(`雲端工作階段暫時無法恢復：${error.message}；本機收藏仍可使用`, 8500); }
+    render(); renderCloudStatus(); updateStorageSummary(); handleLegacyShareQuery();
+    if (authResult === 'success') toast('Google Drive 已安全登入，後續會自動恢復工作階段 ✓');
+    else if (authResult) toast(`Google 登入未完成（${authResult}）；本機收藏仍完整保留`, 8500);
     if (migration?.imported) toast(`已安全複製 ${migration.imported} 筆舊版收藏到 IndexedDB；原始資料仍保留`);
     if (migration?.errors?.length || migration?.error) toast('部分舊版資料無法遷移；原始 localStorage 未刪除，請先下載備份', 8000);
     window.__PA_READY__ = true;
