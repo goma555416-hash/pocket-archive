@@ -2,16 +2,23 @@ import {
   TYPES, ALLOWED_IMAGE_TYPES, MAX_IMAGE_BYTES, cleanTags, normalizeUrl, displayHost, inferType,
   validatedEntry, createEntry, createImageEntry, parseBatchUrls, readBackup, createBackupEnvelope,
   previewMerge, createInboxEnvelope, readOrganized, applySuggestions, restoreSnapshot, matchesEntry,
-  escapeHtml, sha256, hasValidImageSignature
+  escapeHtml, sha256, hasValidImageSignature, makeId
 } from './lib.mjs';
 import { initRepository } from './db.mjs';
 import { createZip, readZip, decodeText } from './archive.mjs';
+import { GoogleAuthSession, DriveApi, isValidGoogleClientId } from './drive.mjs';
+import { CloudBackupService, CloudAiExchange, CloudSyncService } from './cloud.mjs';
+import { recordLocalChanges, resolveConflict } from './sync.mjs';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const state = {
   repository: null, entries: [], view: 'inbox', query: '', type: 'all', sort: 'new', selected: new Set(),
-  batch: [], images: [], pendingImport: null, pendingSuggestions: null, thumbnailUrls: []
+  batch: [], images: [], pendingImport: null, pendingSuggestions: null, thumbnailUrls: [],
+  deviceId: '', syncJournal: {}, tombstones: {}, cloudConflicts: [], cloudBackups: [], cloudJobs: [],
+  cloudSettings: { clientId: '', autoBackup: true, retention: 5, encryption: false },
+  cloudPassphrase: '', auth: null, drive: null, workspace: null, backupService: null, aiExchange: null, syncService: null,
+  cloudUser: null, cloudBusy: false, backupTimer: null, syncTimer: null
 };
 const names = { inbox: ['收件匣', '尚未整理的收藏'], saved: ['已整理', '已經整理好的收藏'], archived: ['已封存', '暫時收起的收藏'], all: ['全部收藏', '這裡收著所有值得留下的事物'] };
 let toastTimer;
@@ -99,7 +106,15 @@ function render() {
 
 async function persistEntries(nextEntries, message) {
   try {
-    state.entries = await state.repository.replaceEntries(nextEntries);
+    const sync = recordLocalChanges(state.entries, nextEntries, { deviceId: state.deviceId, journal: state.syncJournal, tombstones: state.tombstones });
+    state.entries = await state.repository.replaceEntries(sync.entries);
+    state.syncJournal = sync.journal; state.tombstones = sync.tombstones;
+    await Promise.all([
+      state.repository.setMeta('sync-journal', state.syncJournal),
+      state.repository.setMeta('sync-tombstones', state.tombstones),
+      state.repository.setMeta('cloud-dirty', true)
+    ]);
+    scheduleAutoBackup(); scheduleAutoSync();
     render(); if (message) toast(message); return true;
   } catch (error) { toast(error.message, 6500); return false; }
 }
@@ -152,7 +167,8 @@ async function deleteEntry(id) {
   const entry = state.entries.find(item => item.id === id); if (!entry) return;
   if (!confirm(`確定永久刪除「${entry.title}」及其本機附件？請先確認已有備份。`)) return;
   try {
-    await state.repository.deleteEntry(entry); state.entries = state.entries.filter(item => item.id !== id); state.selected.delete(id); render(); toast('已刪除收藏');
+    if (!await persistEntries(state.entries.filter(item => item.id !== id))) return;
+    await state.repository.deleteEntry(entry); state.selected.delete(id); render(); toast('已刪除收藏；同步時會保留刪除紀錄');
   } catch (error) { toast(error.message); }
 }
 
@@ -166,7 +182,7 @@ function previewBatch() {
 async function saveBatch(event) {
   event.preventDefault(); previewBatch();
   const entries = state.batch.filter(row => row.status === 'valid').map(row => createEntry({ url: row.normalizedUrl, originalUrl: row.input, type: row.type }));
-  try { await state.repository.saveEntries(entries); state.entries = [...entries, ...state.entries]; render(); closeDialog('batch-dialog'); toast(`已加入 ${entries.length} 筆，錯誤與重複項目已略過 ✓`); }
+  try { if (await persistEntries([...entries, ...state.entries])) { closeDialog('batch-dialog'); toast(`已加入 ${entries.length} 筆，錯誤與重複項目已略過 ✓`); } }
   catch (error) { toast(error.message, 6500); }
 }
 
@@ -199,13 +215,13 @@ async function prepareImages(fileList) {
 async function saveImages(event) {
   event.preventDefault();
   const valid = state.images.filter(item => item.status === 'valid');
-  let saved = 0; const failures = [];
+  let saved = 0; const failures = []; const added = [];
   for (const item of valid) {
     try {
-      const entry = createImageEntry(item.file, item.hash); await state.repository.saveEntry(entry, item.file); state.entries.unshift(entry); saved += 1;
+      const entry = createImageEntry(item.file, item.hash); await state.repository.saveEntry(entry, item.file); added.unshift(entry); saved += 1;
     } catch (error) { failures.push(`${item.file.name}: ${error.message}`); }
   }
-  render();
+  if (added.length) await persistEntries([...added, ...state.entries]); else render();
   if (!failures.length) { closeDialog('image-dialog'); toast(`已保存 ${saved} 張原始圖片 ✓`); }
   else toast(`已保存 ${saved} 張；${failures.length} 張失敗。${failures[0]}`, 8000);
 }
@@ -274,7 +290,7 @@ async function confirmImport() {
   const entries = state.pendingImport.preview.add; const needed = new Map();
   entries.filter(entry => entry.attachment).forEach(entry => needed.set(entry.attachment.id, state.pendingImport.blobs.get(entry.attachment.id)));
   try {
-    await state.repository.importBundle(entries, needed); state.entries = [...entries, ...state.entries]; state.pendingImport = null; render(); closeDialog('confirm-dialog'); toast(`已安全合併 ${entries.length} 筆收藏 ✓`);
+    await state.repository.importBundle(entries, needed); await persistEntries([...entries, ...state.entries]); state.pendingImport = null; render(); closeDialog('confirm-dialog'); toast(`已安全合併 ${entries.length} 筆收藏 ✓`);
   } catch (error) { toast(error.message, 7500); }
 }
 
@@ -301,12 +317,16 @@ async function importOrganized(event) {
   try {
     if (file.size > 8 * 1024 * 1024) throw new Error('organized.json 不可超過 8 MB');
     const exportIds = await state.repository.getMeta('ai-export-ids', []);
-    state.pendingSuggestions = readOrganized(await file.text(), { exportIds, entries: state.entries });
-    const byId = new Map(state.entries.map(entry => [entry.id, entry]));
-    const { accepted, rejected } = state.pendingSuggestions;
-    $('#ai-preview').innerHTML = `<p class="preview-summary"><strong>${accepted.length} 筆可預覽</strong> · ${rejected.length} 筆拒絕</p><ul class="suggestion-list">${accepted.map(item => `<li><label><input type="checkbox" data-suggestion-id="${escapeHtml(item.id)}" checked /><span><b>${escapeHtml(byId.get(item.id)?.title || item.id)}</b><small>${escapeHtml(item.categories.join('、') || '分類不變')} · ${escapeHtml(item.tags.join('、') || '無新標籤')} · 信心 ${escapeHtml(item.confidence)}</small><em>${escapeHtml(item.summary || item.reason || '無摘要')}</em></span></label></li>`).join('')}</ul>${rejected.length ? `<p class="error-note">${rejected.length} 筆因未知 ID 或欄位錯誤不會套用。</p>` : ''}`;
-    $('#apply-ai').hidden = accepted.length === 0;
+    showSuggestionPreview(readOrganized(await file.text(), { exportIds, entries: state.entries }));
   } catch (error) { toast(`分類結果拒絕匯入：${error.message}`, 7500); }
+}
+
+function showSuggestionPreview(result) {
+  state.pendingSuggestions = result;
+  const byId = new Map(state.entries.map(entry => [entry.id, entry]));
+  const { accepted, rejected } = result;
+  $('#ai-preview').innerHTML = `<p class="preview-summary"><strong>${accepted.length} 筆可預覽</strong> · ${rejected.length} 筆拒絕</p><ul class="suggestion-list">${accepted.map(item => `<li><label><input type="checkbox" data-suggestion-id="${escapeHtml(item.id)}" checked /><span><b>${escapeHtml(byId.get(item.id)?.title || item.id)}</b><small>${escapeHtml(item.categories.join('、') || '分類不變')} · ${escapeHtml(item.tags.join('、') || '無新標籤')} · 信心 ${escapeHtml(item.confidence)}</small><em>${escapeHtml(item.summary || item.reason || '無摘要')}</em></span></label></li>`).join('')}</ul>${rejected.length ? `<p class="error-note">${rejected.length} 筆因未知 ID 或欄位錯誤不會套用。</p>` : ''}`;
+  $('#apply-ai').hidden = accepted.length === 0;
 }
 
 async function applyOrganized() {
@@ -316,7 +336,10 @@ async function applyOrganized() {
   const result = applySuggestions(state.entries, state.pendingSuggestions.accepted, selectedIds);
   try {
     await state.repository.setMeta('ai-undo-snapshot', { entries: result.snapshot, at: new Date().toISOString() });
-    await state.repository.replaceEntries(result.entries); state.entries = result.entries; state.pendingSuggestions = null; render(); $('#ai-preview').innerHTML = ''; $('#apply-ai').hidden = true; closeDialog('ai-dialog'); toast(`已套用 ${result.applied} 筆；可從備份視窗單次復原 ✓`);
+    if (!await persistEntries(result.entries)) return;
+    const readyJob = state.cloudJobs.find(job => job.status === 'ready');
+    if (readyJob) { readyJob.status = 'applied'; await state.repository.setMeta('cloud-ai-jobs', state.cloudJobs); }
+    state.pendingSuggestions = null; render(); $('#ai-preview').innerHTML = ''; $('#apply-ai').hidden = true; closeDialog('ai-dialog'); toast(`已套用 ${result.applied} 筆；可從備份視窗單次復原 ✓`);
   } catch (error) { toast(error.message, 7000); }
 }
 
@@ -356,11 +379,210 @@ async function readClipboardToBatch() {
   catch { openDialog('batch-dialog'); toast('剪貼簿無法讀取，請長按輸入框貼上'); }
 }
 
+function cloudConnected() { return Boolean(state.auth?.status().connected && state.drive && state.workspace); }
+
+function renderCloudStatus() {
+  const connected = cloudConnected();
+  const status = $('#cloud-status'); if (!status) return;
+  const lastSync = state.cloudSettings.lastSyncAt ? new Date(state.cloudSettings.lastSyncAt).toLocaleString('zh-TW') : '尚未同步';
+  const lastBackup = state.cloudSettings.lastBackupAt ? new Date(state.cloudSettings.lastBackupAt).toLocaleString('zh-TW') : '尚未備份';
+  status.className = `cloud-status ${connected ? 'is-connected' : ''}`;
+  status.innerHTML = connected
+    ? `<strong>已連結 ${escapeHtml(state.cloudUser?.emailAddress || 'Google Drive')}</strong><span>最近同步：${escapeHtml(lastSync)} · 最近備份：${escapeHtml(lastBackup)}</span>`
+    : '<strong>尚未連結 Google Drive</strong><span>本機收藏仍可完整使用；不會假裝已同步。</span>';
+  $('#cloud-connect').hidden = connected; $('#cloud-disconnect').hidden = !connected;
+  $$('[data-requires-cloud]').forEach(button => { button.disabled = !connected || state.cloudBusy; });
+  $('#cloud-passphrase-row').hidden = !$('#cloud-encryption')?.checked;
+  renderConflicts();
+}
+
+function renderConflicts() {
+  const panel = $('#sync-conflicts'); if (!panel) return;
+  if (!state.cloudConflicts.length) { panel.innerHTML = '<p class="privacy-note">目前沒有待處理的同步衝突。</p>'; return; }
+  panel.innerHTML = `<p class="error-note">${state.cloudConflicts.length} 筆同時修改已保留。系統先採用不刪資料的決定，你可選擇版本。</p><ul class="preview-list">${state.cloudConflicts.slice(0, 30).map((conflict, index) => {
+    const localTitle = conflict.local.entry?.title || (conflict.local.operation === 'delete' ? '刪除' : conflict.itemId);
+    const remoteTitle = conflict.remote.entry?.title || (conflict.remote.operation === 'delete' ? '刪除' : conflict.itemId);
+    return `<li><b>衝突</b><span>${escapeHtml(localTitle)} ↔ ${escapeHtml(remoteTitle)}<span class="conflict-actions"><button type="button" data-conflict-index="${index}" data-conflict-choice="local">保留本機側</button><button type="button" data-conflict-index="${index}" data-conflict-choice="remote">採用另一裝置</button></span></span></li>`;
+  }).join('')}</ul>`;
+}
+
+async function saveCloudSettingsFromForm() {
+  const clientId = $('#google-client-id').value.trim();
+  const settings = {
+    ...state.cloudSettings, clientId,
+    autoBackup: $('#cloud-auto-backup').checked,
+    retention: Math.max(1, Math.min(30, Number($('#cloud-retention').value) || 5)),
+    encryption: $('#cloud-encryption').checked
+  };
+  state.cloudSettings = settings; state.cloudPassphrase = $('#cloud-passphrase').value;
+  await state.repository.setMeta('cloud-settings', settings);
+}
+
+async function connectDrive() {
+  try {
+    await saveCloudSettingsFromForm();
+    if (!isValidGoogleClientId(state.cloudSettings.clientId)) throw new Error('請先填入 Google OAuth Web Client ID');
+    state.cloudBusy = true; renderCloudStatus();
+    state.auth = new GoogleAuthSession({ clientId: state.cloudSettings.clientId });
+    await state.auth.connect({ prompt: 'consent' });
+    state.drive = new DriveApi({ getAccessToken: () => state.auth.getAccessToken() });
+    state.workspace = await state.drive.ensureWorkspace();
+    state.backupService = new CloudBackupService(state.drive, state.workspace);
+    state.aiExchange = new CloudAiExchange(state.drive, state.workspace);
+    state.syncService = new CloudSyncService(state.drive, state.workspace);
+    state.cloudUser = (await state.drive.aboutUser()).user || null;
+    await state.repository.setMeta('drive-workspace', state.workspace);
+    toast('Google Drive 已連結；Token 僅保留在本次頁面記憶體');
+    await refreshCloudBackups(); scheduleAutoBackup(800); scheduleAutoSync(1600);
+  } catch (error) {
+    state.auth?.clear(); state.drive = null; state.workspace = null;
+    toast(error.message, 8000);
+  } finally { state.cloudBusy = false; renderCloudStatus(); }
+}
+
+async function disconnectDrive() {
+  try { await state.auth?.disconnect(); } catch { /* local disconnect still succeeds */ }
+  clearTimeout(state.backupTimer); clearTimeout(state.syncTimer); state.auth = null; state.drive = null; state.workspace = null;
+  state.backupService = null; state.aiExchange = null; state.syncService = null; state.cloudUser = null;
+  renderCloudStatus(); toast('已中斷 Google Drive；本機收藏完整保留');
+}
+
+function scheduleAutoBackup(delayMs = 6000) {
+  clearTimeout(state.backupTimer);
+  if (!cloudConnected() || !state.cloudSettings.autoBackup) return;
+  state.backupTimer = setTimeout(() => runCloudBackup(true), delayMs);
+}
+
+function scheduleAutoSync(delayMs = 9000) {
+  clearTimeout(state.syncTimer);
+  if (!cloudConnected()) return;
+  state.syncTimer = setTimeout(() => syncNow(true), delayMs);
+}
+
+async function runCloudBackup(automatic = false) {
+  if (!cloudConnected() || state.cloudBusy) return;
+  if (state.cloudSettings.encryption && !state.cloudPassphrase) {
+    $('#cloud-backup-note').textContent = '自動備份等待解鎖：加密密碼不會永久儲存，請在本次工作階段重新輸入。';
+    if (!automatic) toast('請輸入加密密碼後再備份');
+    return;
+  }
+  state.cloudBusy = true; renderCloudStatus();
+  try {
+    const file = await state.backupService.create(state.entries, state.repository, {
+      retention: state.cloudSettings.retention,
+      passphrase: state.cloudSettings.encryption ? state.cloudPassphrase : ''
+    });
+    state.cloudSettings.lastBackupAt = new Date().toISOString();
+    await Promise.all([state.repository.setMeta('cloud-settings', state.cloudSettings), state.repository.setMeta('cloud-dirty', false)]);
+    $('#cloud-backup-note').textContent = `備份成功：${file.filename} · ${friendlyBytes(Number(file.size))} · 完整性已驗證`;
+    await refreshCloudBackups(); if (!automatic) toast('Google Drive 完整備份成功 ✓');
+  } catch (error) {
+    $('#cloud-backup-note').textContent = `備份失敗：${error.message}`;
+    if (!automatic) toast(`雲端備份失敗：${error.message}`, 8000);
+  } finally { state.cloudBusy = false; renderCloudStatus(); if (cloudConnected()) scheduleAutoSync(700); }
+}
+
+async function refreshCloudBackups() {
+  if (!cloudConnected()) return;
+  try {
+    state.cloudBackups = await state.backupService.list();
+    $('#cloud-backup-list').innerHTML = state.cloudBackups.length ? `<ul class="preview-list">${state.cloudBackups.map((file, index) => `<li><b>${file.appProperties?.encrypted === 'true' ? '已加密' : '備份'}</b><span>${escapeHtml(new Date(file.createdTime).toLocaleString('zh-TW'))} · ${friendlyBytes(Number(file.size))}<button type="button" class="inline-button" data-cloud-restore="${index}">預覽還原</button></span></li>`).join('')}</ul>` : '<p class="privacy-note">還沒有雲端備份。</p>';
+  } catch (error) { $('#cloud-backup-list').textContent = `無法取得備份清單：${error.message}`; }
+}
+
+async function previewCloudRestore(index) {
+  const file = state.cloudBackups[index]; if (!file) return;
+  state.cloudBusy = true; renderCloudStatus();
+  try {
+    const downloaded = await state.backupService.download(file, state.cloudPassphrase);
+    const backupFile = new File([downloaded.blob], downloaded.filename, { type: downloaded.blob.type });
+    state.pendingImport = await inspectBackup(backupFile);
+    const { add, skip, conflicts } = state.pendingImport.preview;
+    $('#confirm-content').innerHTML = `<p class="preview-summary"><strong>${add.length} 筆將合併</strong> · ${skip.length} 筆重複略過 · ${conflicts.length} 筆 ID 衝突略過</p><p>已驗證 SHA-256；確認前不會清除或覆寫現有資料。</p>`;
+    $('#confirm-import').disabled = add.length === 0; openDialog('confirm-dialog');
+  } catch (error) { toast(`雲端還原預覽失敗：${error.message}`, 8000); }
+  finally { state.cloudBusy = false; renderCloudStatus(); }
+}
+
+async function syncNow(automatic = false) {
+  if (!cloudConnected()) return;
+  if (state.cloudBusy) { if (automatic) scheduleAutoSync(1800); return; }
+  state.cloudBusy = true; renderCloudStatus();
+  try {
+    if (state.entries.some(entry => !entry.sync)) {
+      const bootstrap = recordLocalChanges(state.entries.filter(entry => entry.sync), state.entries, { deviceId: state.deviceId, journal: state.syncJournal, tombstones: state.tombstones });
+      state.entries = await state.repository.replaceEntries(bootstrap.entries); state.syncJournal = bootstrap.journal; state.tombstones = bootstrap.tombstones;
+    }
+    const result = await state.syncService.sync({ entries: state.entries, repository: state.repository, deviceId: state.deviceId, journal: state.syncJournal, tombstones: state.tombstones });
+    state.entries = await state.repository.replaceBundle(result.entries, result.attachmentBlobs);
+    state.tombstones = result.tombstones;
+    const conflictMap = new Map([...state.cloudConflicts, ...result.conflicts].map(conflict => [`${conflict.itemId}:${JSON.stringify(conflict.local.clock)}:${JSON.stringify(conflict.remote.clock)}`, conflict]));
+    state.cloudConflicts = [...conflictMap.values()].slice(-100);
+    state.cloudSettings.lastSyncAt = new Date().toISOString();
+    await Promise.all([
+      state.repository.setMeta('sync-journal', state.syncJournal), state.repository.setMeta('sync-tombstones', state.tombstones),
+      state.repository.setMeta('sync-conflicts', state.cloudConflicts), state.repository.setMeta('cloud-settings', state.cloudSettings)
+    ]);
+    render(); renderCloudStatus(); if (!automatic || result.applied || result.conflicts.length) toast(`同步完成：套用 ${result.applied} 筆，${result.conflicts.length} 筆衝突待確認`);
+  } catch (error) { if (!automatic) toast(`同步失敗：${error.message}`, 9000); else $('#cloud-backup-note').textContent = `自動同步待重試：${error.message}`; }
+  finally { state.cloudBusy = false; renderCloudStatus(); }
+}
+
+async function handleConflictChoice(index, choice) {
+  const conflict = state.cloudConflicts[index]; if (!conflict) return;
+  const resolution = resolveConflict(conflict, choice, state.deviceId);
+  if (resolution.entry) {
+    state.entries = state.entries.filter(entry => entry.id !== conflict.itemId); state.entries.unshift(resolution.entry); delete state.tombstones[conflict.itemId];
+    await state.repository.replaceEntries(state.entries);
+  } else {
+    const current = state.entries.find(entry => entry.id === conflict.itemId); state.entries = state.entries.filter(entry => entry.id !== conflict.itemId);
+    if (current) await state.repository.deleteEntry(current); state.tombstones[conflict.itemId] = resolution.record;
+  }
+  state.syncJournal[conflict.itemId] = resolution.record; state.cloudConflicts.splice(index, 1);
+  await Promise.all([state.repository.setMeta('sync-journal', state.syncJournal), state.repository.setMeta('sync-tombstones', state.tombstones), state.repository.setMeta('sync-conflicts', state.cloudConflicts)]);
+  render(); renderCloudStatus(); toast('衝突選擇已保存，請再次同步傳送結果');
+}
+
+async function enqueueCloudAi() {
+  if (!cloudConnected() || state.cloudBusy) return;
+  const chosen = state.selected.size ? state.entries.filter(entry => state.selected.has(entry.id)) : state.entries.filter(entry => entry.status === 'inbox');
+  if (!chosen.length) { toast('沒有可送出的待整理項目'); return; }
+  state.cloudBusy = true; renderCloudStatus();
+  try {
+    const job = await state.aiExchange.enqueue(chosen, state.repository);
+    const exportIds = await state.repository.getMeta('ai-export-ids', []);
+    if (job.exportId && !exportIds.includes(job.exportId)) await state.repository.setMeta('ai-export-ids', [job.exportId, ...exportIds].slice(0, 50));
+    if (!job.duplicate || (job.resultFileId && !state.cloudJobs.some(item => item.exportId === job.exportId))) {
+      state.cloudJobs.unshift({ exportId: job.exportId, inboxFileId: job.inboxFile.id, resultFileId: job.resultFile?.id || job.resultFileId, createdAt: new Date().toISOString(), status: 'pending' });
+      state.cloudJobs = state.cloudJobs.slice(0, 50); await state.repository.setMeta('cloud-ai-jobs', state.cloudJobs);
+    }
+    $('#ai-cloud-status').textContent = job.duplicate ? '相同批次已存在，未重複建立。' : `已送出 ${chosen.length} 筆。請在 Codex 輸入「整理 Pocket Archive 最新的待整理收藏。」`;
+    toast(job.duplicate ? '相同 AI 工作已存在' : '已建立 Drive AI-Inbox 與結果占位檔 ✓');
+  } catch (error) { toast(`送到 AI-Inbox 失敗：${error.message}`, 8500); }
+  finally { state.cloudBusy = false; renderCloudStatus(); }
+}
+
+async function checkCloudAi() {
+  if (!cloudConnected() || state.cloudBusy) return;
+  const job = state.cloudJobs.find(item => item.status !== 'applied');
+  if (!job) { toast('沒有由此裝置建立的待檢查 AI 工作'); return; }
+  state.cloudBusy = true; renderCloudStatus();
+  try {
+    const exportIds = await state.repository.getMeta('ai-export-ids', []);
+    const checked = await state.aiExchange.readResult(job, state.entries, exportIds);
+    if (checked.pending) { $('#ai-cloud-status').textContent = '最新結果仍是待處理占位檔；Codex 完成後再檢查。'; toast('Codex 結果尚未寫回'); return; }
+    job.status = 'ready'; await state.repository.setMeta('cloud-ai-jobs', state.cloudJobs);
+    showSuggestionPreview(checked.result); $('#ai-cloud-status').textContent = '已取得並驗證雲端結果，請逐項預覽後套用。';
+  } catch (error) { toast(`取得 AI 結果失敗：${error.message}`, 8500); }
+  finally { state.cloudBusy = false; renderCloudStatus(); }
+}
+
 function bindEvents() {
   $('#new-button').addEventListener('click', () => openEditor()); $('#mobile-new').addEventListener('click', () => openEditor()); $('#empty-add').addEventListener('click', () => openEditor());
   $('#batch-button').addEventListener('click', () => { $('#batch-form').reset(); state.batch = []; $('#batch-preview').innerHTML = ''; $('#batch-save').disabled = true; openDialog('batch-dialog'); });
   $('#image-button').addEventListener('click', () => { $('#image-form').reset(); state.images = []; $('#image-preview').innerHTML = ''; $('#image-save').disabled = true; openDialog('image-dialog'); });
   $('#backup-button').addEventListener('click', () => { openDialog('backup-dialog'); updateStorageSummary(); }); $('#ai-button').addEventListener('click', () => openDialog('ai-dialog'));
+  $('#cloud-button').addEventListener('click', () => { openDialog('cloud-dialog'); renderCloudStatus(); if (cloudConnected()) refreshCloudBackups(); });
   $$('[data-close]').forEach(button => button.addEventListener('click', () => closeDialog(button.dataset.close)));
   $$('dialog').forEach(dialog => dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); }));
   $('#entry-form').addEventListener('submit', saveFromForm); $('#batch-form').addEventListener('submit', saveBatch); $('#image-form').addEventListener('submit', saveImages);
@@ -370,6 +592,12 @@ function bindEvents() {
   const drop = $('#drop-zone'); ['dragenter', 'dragover'].forEach(name => drop.addEventListener(name, event => { event.preventDefault(); drop.classList.add('is-dragging'); })); ['dragleave', 'drop'].forEach(name => drop.addEventListener(name, event => { event.preventDefault(); drop.classList.remove('is-dragging'); })); drop.addEventListener('drop', event => prepareImages(event.dataTransfer.files));
   $('#export-backup').addEventListener('click', exportBackup); $('#import-backup').addEventListener('click', () => $('#backup-file').click()); $('#backup-file').addEventListener('change', importBackupFile); $('#confirm-import').addEventListener('click', confirmImport);
   $('#export-ai').addEventListener('click', exportForCodex); $('#import-ai').addEventListener('click', () => $('#organized-file').click()); $('#organized-file').addEventListener('change', importOrganized); $('#apply-ai').addEventListener('click', applyOrganized); $('#undo-ai').addEventListener('click', undoAi);
+  $('#cloud-connect').addEventListener('click', connectDrive); $('#cloud-disconnect').addEventListener('click', disconnectDrive);
+  $('#cloud-save-settings').addEventListener('click', async () => { await saveCloudSettingsFromForm(); renderCloudStatus(); toast('雲端設定已保存；密碼只保留到本頁關閉'); });
+  $('#cloud-backup-now').addEventListener('click', () => runCloudBackup(false)); $('#cloud-sync-now').addEventListener('click', () => syncNow(false));
+  $('#cloud-refresh-backups').addEventListener('click', refreshCloudBackups); $('#cloud-encryption').addEventListener('change', renderCloudStatus);
+  $('#cloud-passphrase').addEventListener('input', event => { state.cloudPassphrase = event.target.value; });
+  $('#ai-cloud-export').addEventListener('click', enqueueCloudAi); $('#ai-cloud-check').addEventListener('click', checkCloudAi);
   $('#persist-storage').addEventListener('click', async () => { const persisted = await navigator.storage?.persist?.(); toast(persisted ? '瀏覽器已同意保留本機資料' : '瀏覽器未授予保留權限；請定期下載備份'); });
   $('#search-input').addEventListener('input', event => { state.query = event.target.value.trim(); render(); }); $('#type-filter').addEventListener('change', event => { state.type = event.target.value; render(); }); $('#sort-filter').addEventListener('change', event => { state.sort = event.target.value; render(); });
   $('#select-visible').addEventListener('change', event => { filteredEntries().forEach(entry => event.target.checked ? state.selected.add(entry.id) : state.selected.delete(entry.id)); render(); }); $('#selection-clear').addEventListener('click', () => { state.selected.clear(); render(); });
@@ -377,11 +605,15 @@ function bindEvents() {
   $('#bulk-edit-button').addEventListener('click', () => { $('#bulk-form').reset(); openDialog('bulk-dialog'); }); $('#bulk-form').addEventListener('submit', async event => { event.preventDefault(); const category = $('#bulk-category').value.trim(); const tags = cleanTags($('#bulk-tags').value); await updateEntries([...state.selected], entry => ({ ...entry, category: category || entry.category, tags: cleanTags([...entry.tags, ...tags]) }), '批次分類與標籤已更新'); closeDialog('bulk-dialog'); });
   document.addEventListener('change', event => { const input = event.target.closest('[data-select-id]'); if (!input) return; input.checked ? state.selected.add(input.dataset.selectId) : state.selected.delete(input.dataset.selectId); render(); });
   document.addEventListener('click', event => {
+    const restoreButton = event.target.closest('[data-cloud-restore]'); if (restoreButton) { previewCloudRestore(Number(restoreButton.dataset.cloudRestore)); return; }
+    const conflictButton = event.target.closest('[data-conflict-choice]'); if (conflictButton) { handleConflictChoice(Number(conflictButton.dataset.conflictIndex), conflictButton.dataset.conflictChoice); return; }
     const view = event.target.closest('[data-view]'); if (view) { state.view = view.dataset.view; render(); return; }
     const button = event.target.closest('[data-action][data-id]'); if (!button) return; const entry = state.entries.find(item => item.id === button.dataset.id); if (!entry) return;
     if (button.dataset.action === 'edit') openEditor(entry); else if (button.dataset.action === 'delete') deleteEntry(entry.id); else if (button.dataset.action === 'star') updateEntries([entry.id], item => ({ ...item, starred: !item.starred }), entry.starred ? '已移除星號' : '已加上星號'); else updateEntries([entry.id], item => ({ ...item, status: button.dataset.action }), '收藏狀態已更新');
   });
   document.addEventListener('keydown', event => { if ($$('dialog[open]').length || event.ctrlKey || event.metaKey || event.altKey || /^(input|textarea|select)$/i.test(document.activeElement?.tagName || '')) return; if (event.key === '/') { event.preventDefault(); $('#search-input').focus(); } if (event.key.toLowerCase() === 'n') { event.preventDefault(); openEditor(); } });
+  window.addEventListener('online', () => { if (cloudConnected()) { scheduleAutoBackup(1200); scheduleAutoSync(1700); toast('網路已恢復，將補傳待備份與同步變更'); } });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && cloudConnected()) { scheduleAutoBackup(1500); scheduleAutoSync(2100); } });
 }
 
 function handleLegacyShareQuery() {
@@ -394,6 +626,12 @@ async function init() {
   bindEvents();
   try {
     const { repository, migration } = await initRepository(); state.repository = repository; state.entries = await repository.listEntries();
+    state.deviceId = await repository.getMeta('device-id') || makeId('device'); await repository.setMeta('device-id', state.deviceId);
+    state.syncJournal = await repository.getMeta('sync-journal', {}); state.tombstones = await repository.getMeta('sync-tombstones', {});
+    state.cloudConflicts = await repository.getMeta('sync-conflicts', []); state.cloudJobs = await repository.getMeta('cloud-ai-jobs', []);
+    state.cloudSettings = { ...state.cloudSettings, ...(await repository.getMeta('cloud-settings', {})) };
+    $('#google-client-id').value = state.cloudSettings.clientId || ''; $('#cloud-auto-backup').checked = state.cloudSettings.autoBackup !== false;
+    $('#cloud-retention').value = state.cloudSettings.retention || 5; $('#cloud-encryption').checked = Boolean(state.cloudSettings.encryption);
     render(); updateStorageSummary(); handleLegacyShareQuery();
     if (migration?.imported) toast(`已安全複製 ${migration.imported} 筆舊版收藏到 IndexedDB；原始資料仍保留`);
     if (migration?.errors?.length || migration?.error) toast('部分舊版資料無法遷移；原始 localStorage 未刪除，請先下載備份', 8000);

@@ -1,6 +1,6 @@
 # Pocket Archive — 不接 API 的 Codex 批次整理規格（schema v2）
 
-本流程已實作。App 不呼叫 OpenAI 或其他 AI API，不在背景執行模型，也不自動上傳收藏。使用者主動匯出、交給本機 Codex CLI（或明確選擇的 Codex Cloud）、再匯回結果。
+本流程已實作。App 不呼叫 OpenAI 或其他 AI API，也不在背景執行模型。使用者可使用本機檔案流程，或在已明確授權 Google Drive 後，主動把選取批次送到 AI-Inbox，再由 Codex Cloud 原檔寫回 App 預建的 AI-Results 占位檔。
 
 ## 流程
 
@@ -10,6 +10,8 @@
 4. App 嚴格核對 schema、由本裝置記錄的 `export_id`、item ID 及欄位，列出接受和拒絕項目。
 5. 使用者逐項勾選後套用。只可更新建議分類、合併標籤、AI 摘要及已完成狀態；原始網址、備註、來源與附件不變。
 6. App 在 IndexedDB 保存一次更新前快照，可從備份視窗復原最近一次套用。
+
+Drive 流程的 schema 完全相同。為兼容不同 OAuth Client 的 `drive.file` 權限，Codex 不可另建結果檔，必須依 [CODEX-DRIVE-WORKFLOW.md](./CODEX-DRIVE-WORKFLOW.md) 覆寫 `organized-<export_id>.json` 的既有 file ID。
 
 ## Inbox envelope
 

@@ -101,6 +101,19 @@ function sanitizeAiSuggestion(data) {
   };
 }
 
+function sanitizeSync(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+  const clock = {};
+  if (data.clock && typeof data.clock === 'object' && !Array.isArray(data.clock)) {
+    for (const [device, value] of Object.entries(data.clock).slice(0, 64)) {
+      if (/^[A-Za-z0-9._:-]{1,128}$/.test(device) && Number.isSafeInteger(value) && value >= 0) clock[device] = value;
+    }
+  }
+  if (!Object.keys(clock).length) return null;
+  const modifiedAt = typeof data.modifiedAt === 'string' && !Number.isNaN(Date.parse(data.modifiedAt)) ? data.modifiedAt : new Date().toISOString();
+  return { clock, modifiedAt, modifiedBy: String(data.modifiedBy || '').slice(0, 128) };
+}
+
 export function validatedEntry(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('資料格式不正確');
   const now = new Date().toISOString();
@@ -134,6 +147,7 @@ export function validatedEntry(data) {
     source: String(data.source || (kind === 'image' ? 'file' : displayHost(url))).slice(0, 160),
     attachment,
     aiSuggestion: sanitizeAiSuggestion(data.aiSuggestion),
+    sync: sanitizeSync(data.sync),
     createdAt: isoOrNow(data.createdAt, now),
     updatedAt: isoOrNow(data.updatedAt, now)
   };
