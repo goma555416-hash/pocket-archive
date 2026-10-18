@@ -127,6 +127,19 @@ try {
   assert.equal(cloudSettings.clientId, '123456-e2e.apps.googleusercontent.com'); assert.equal(cloudSettings.retention, 7); assert.equal(cloudSettings.encryption, true);
   process.stdout.write('E2E：Drive 未授權狀態、設定與加密 UI 通過\n');
 
+  const nativeFetch = await cdp.evaluate(`(async () => {
+    const { DriveApi } = await import('./drive.mjs');
+    const drive = new DriveApi({ getAccessToken: () => 'browser-regression-token' });
+    try {
+      const manifest = await drive.request('./manifest.webmanifest', { attempts: 1 });
+      return { ok: manifest.short_name === 'Pocket Archive', error: '', name: manifest.name };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  })()`);
+  assert.equal(nativeFetch.ok, true, `DriveApi 預設 window.fetch 必須保留正確接收者：${nativeFetch.error || nativeFetch.name || '回應錯誤'}`);
+  process.stdout.write('E2E：Drive API 原生 window.fetch 綁定通過\n');
+
   const atomicRollback = await cdp.evaluate(`(async () => {
     const { PocketRepository } = await import('./db.mjs');
     const { createEntry, validatedEntry } = await import('./lib.mjs');
@@ -170,7 +183,7 @@ try {
   await waitFor(() => cdp.evaluate("Boolean(document.querySelector('#page-heading'))"), '離線啟動', 12000);
   await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
 
-  process.stdout.write('E2E 通過：遷移、單筆、批次、圖片、搜尋、備份、Codex 預覽/套用/復原、390px、離線。\n');
+  process.stdout.write('E2E 通過：遷移、單筆、批次、圖片、搜尋、備份、Codex 預覽/套用/復原、Drive 原生 fetch、390px、離線。\n');
 } finally {
   cdp?.close();
   if (browser && browser.exitCode === null) {

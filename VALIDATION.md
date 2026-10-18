@@ -15,7 +15,7 @@ npm run test:e2e
 - Codex 匿名範例 schema：2 筆通過。
 - Node：5 個測試檔、37 個 `test()` case 通過。除原有 URL、圖片、IndexedDB migration、ZIP、AI schema、安全與 PWA 測試外，新增 OAuth token 失效/撤銷、Drive 401 與 503 retry、大檔 resumable upload、AES-GCM 往返/錯密碼/竄改、向量時鐘、刪除衝突、journal schema、備份回讀完整性/輪替、AI 占位檔、模擬 iPhone/Windows 雙向 journal + 圖片同步，以及收藏/附件同一 IndexedDB transaction 的成功、一般附件失敗與容量不足回滾。
 - 語法：`app.js`、`lib.mjs`、`db.mjs`、`archive.mjs`、`drive.mjs`、`crypto.mjs`、`sync.mjs`、`cloud.mjs`、`sw.js` 全部 `node --check` 通過。
-- Chromium E2E：實際通過 v1 migration、單筆/批次/圖片、搜尋、備份匯入、Codex export/預覽/套用/復原、Drive 未授權不得顯示成功、雲端設定與加密 UI、真實 IndexedDB 附件 DataCloneError 時整筆 transaction 回滾、表單標籤/按鈕名稱、鍵盤操作、390×844 無水平溢出，以及 Service Worker 離線重新載入。E2E 需要允許本機 loopback socket；預設受限 sandbox 會在 HTTP server bind 時失敗，取得該測試所需網路權限後通過。
+- Chromium E2E：實際通過 v1 migration、單筆/批次/圖片、搜尋、備份匯入、Codex export/預覽/套用/復原、Drive 未授權不得顯示成功、雲端設定與加密 UI、`DriveApi` 預設原生 `window.fetch` 的正確接收者與同來源 API 請求、真實 IndexedDB 附件 DataCloneError 時整筆 transaction 回滾、表單標籤/按鈕名稱、鍵盤操作、390×844 無水平溢出，以及 Service Worker 離線重新載入。E2E 需要允許本機 loopback socket；預設受限 sandbox 會在 HTTP server bind 時失敗，取得該測試所需網路權限後通過。
 
 測試資料只使用 `example.com/.org/.net` 與 8-byte 匿名 PNG signature，沒有讀取或上傳真實收藏。
 
@@ -33,6 +33,8 @@ npm run test:e2e
 因此 Codex 連接器的 ZIP/JSON raw download 與同 file ID raw update 已實證，不只是搜尋能力。
 
 尚未驗證的是 PWA OAuth：目前沒有儲存庫擁有者的 Google OAuth Web Client ID，也不能代替使用者完成 consent screen。PWA 登入、真實 `drive.file` 資料夾建立、兩部實機及 PWA→Codex 跨 OAuth Client 全流程均標示為 **待授權驗證**，不以 mock 測試宣稱正式成功。
+
+`DriveApi` 的預設瀏覽器 `fetch` 綁定已另以 Chromium 真實原生 API 回歸測試驗證，不需要 Token 或 Client Secret；此測試只向本機測試伺服器請求公開 manifest，不代表已完成 Google OAuth 帳號實機驗證。
 
 ## 功能狀態
 
