@@ -55,6 +55,12 @@ export class PocketBackendClient {
   logout() { return this.request('/api/logout', { method: 'POST' }); }
   revokeGrant() { return this.request('/api/auth/revoke', { method: 'POST' }); }
   revokeSession(id) { return this.request(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
+  createCaptureCredential(name, expiresInDays = 180) { return this.request('/api/capture/credentials', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, expiresInDays }) }); }
+  listCaptureCredentials() { return this.request('/api/capture/credentials'); }
+  revokeCaptureCredential(id) { return this.request(`/api/capture/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
+  claimCaptureJobs(limit = 20) { return this.request(`/api/capture/jobs/claim?limit=${encodeURIComponent(limit)}`, { method: 'POST' }); }
+  acknowledgeCaptureJob(id, result = 'saved') { return this.request(`/api/capture/jobs/${encodeURIComponent(id)}/ack`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'completed', result }) }); }
+  retryCaptureJob(id, error = 'local_write_failed') { return this.request(`/api/capture/jobs/${encodeURIComponent(id)}/ack`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'retry', error }) }); }
 }
 
 export class BackendDriveApi {

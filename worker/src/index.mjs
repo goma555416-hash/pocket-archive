@@ -7,6 +7,7 @@ import {
   exchangeAuthorizationCode, googleAuthorizationUrl, refreshGoogleAccessToken, revokeGooglePlainToken,
   verifyGoogleIdToken
 } from './google.mjs';
+import { normalizeUrl } from '../../lib.mjs';
 
 const DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const DRIVE_UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
@@ -329,6 +330,110 @@ async function revokeGrant(request, env) {
   } catch (error) { throw errorWithSession(error, session); }
 }
 
+async function createCaptureCredential(request, env) {
+  return authenticatedResponse(request, env, { csrf: true }, async session => {
+    const body = await readJson(request); const now = nowMs(env);
+    const name = String(body.name || 'iPhone 捷徑').trim().slice(0, 80) || 'iPhone 捷徑';
+    const requestedDays = Number(body.expiresInDays || 180); const days = Number.isFinite(requestedDays) ? Math.max(1, Math.min(365, requestedDays)) : 180;
+    const id = randomToken(12); const secret = randomToken(32);
+    await env.DB.prepare('INSERT INTO shortcut_credentials (id,user_id,token_hash,name,created_at,expires_at) VALUES (?,?,?,?,?,?)')
+      .bind(id, session.user_id, await sha256Text(secret), name, now, now + days * 86_400_000).run();
+    return json({ ok: true, credential: { id, name, createdAt: now, expiresAt: now + days * 86_400_000, scope: 'capture:create' }, token: `pa_capture_${id}.${secret}`, warning: '此憑證只顯示一次；捷徑內的文字並非 Secure Enclave，裝置遺失時請立即撤銷。' }, 201);
+  });
+}
+
+async function listCaptureCredentials(request, env) {
+  return authenticatedResponse(request, env, {}, async session => {
+    const result = await env.DB.prepare('SELECT id,name,created_at,last_used_at,expires_at,revoked_at FROM shortcut_credentials WHERE user_id=? ORDER BY created_at DESC LIMIT 30').bind(session.user_id).all();
+    return json({ ok: true, credentials: (result.results || []).map(item => ({ id: item.id, name: item.name, createdAt: item.created_at, lastUsedAt: item.last_used_at, expiresAt: item.expires_at, revoked: Boolean(item.revoked_at) })) });
+  });
+}
+
+async function revokeCaptureCredential(request, env, id) {
+  return authenticatedResponse(request, env, { csrf: true }, async session => {
+    const result = await env.DB.prepare('UPDATE shortcut_credentials SET revoked_at=? WHERE id=? AND user_id=? AND revoked_at IS NULL').bind(nowMs(env), id, session.user_id).run();
+    if (!Number(result.meta?.changes || 0)) throw httpError(404, 'credential_not_found', '找不到可撤銷的快捷收藏憑證');
+    return json({ ok: true, revoked: id });
+  });
+}
+
+async function authenticateCapture(request, env) {
+  if ([...new URL(request.url).searchParams.keys()].some(key => /token|auth|key|secret/i.test(key))) throw httpError(400, 'credential_in_query', '憑證不可放在 URL query');
+  const match = /^Bearer\s+pa_capture_([A-Za-z0-9_-]{8,64})\.([A-Za-z0-9_-]{32,128})$/.exec(request.headers.get('Authorization') || '');
+  if (!match) throw httpError(401, 'shortcut_unauthorized', '快捷收藏憑證無效或缺少');
+  const now = nowMs(env); const credential = await env.DB.prepare('SELECT * FROM shortcut_credentials WHERE id=?').bind(match[1]).first();
+  if (!credential || credential.revoked_at || Number(credential.expires_at) <= now || !safeEqual(credential.token_hash, await sha256Text(match[2]))) throw httpError(401, 'shortcut_expired', '快捷收藏憑證已失效，請在 Pocket Archive 重新配對');
+  const windowStart = Math.floor(now / 60_000) * 60_000;
+  await env.DB.prepare(`INSERT INTO capture_rate_limits (credential_id,window_start,request_count) VALUES (?,?,1) ON CONFLICT(credential_id,window_start) DO UPDATE SET request_count=request_count+1`).bind(credential.id, windowStart).run();
+  const rate = await env.DB.prepare('SELECT request_count FROM capture_rate_limits WHERE credential_id=? AND window_start=?').bind(credential.id, windowStart).first();
+  if (Number(rate?.request_count || 0) > 30) throw httpError(429, 'rate_limited', '快捷收藏送出過於頻繁，請稍後重試');
+  await env.DB.prepare('UPDATE shortcut_credentials SET last_used_at=? WHERE id=?').bind(now, credential.id).run();
+  return credential;
+}
+
+function sharedUrl(body) {
+  const explicit = typeof body.url === 'string' ? body.url.trim() : '';
+  const text = typeof body.text === 'string' ? body.text.trim().slice(0, 3000) : '';
+  const match = text.match(/https?:\/\/[^\s<>"']+/i); const raw = explicit || (match ? match[0].replace(/[),，。]+$/g, '') : '');
+  if (!raw) throw httpError(422, 'no_valid_url', '分享內容沒有有效的 HTTP/HTTPS 網址');
+  if (raw.length > 2048) throw httpError(413, 'url_too_large', '分享網址過長');
+  try { return { raw, canonical: normalizeUrl(raw), text }; }
+  catch { throw httpError(422, 'no_valid_url', '分享內容沒有有效的 HTTP/HTTPS 網址'); }
+}
+
+async function submitCapture(request, env) {
+  const credential = await authenticateCapture(request, env); const idempotencyKey = request.headers.get('Idempotency-Key') || '';
+  if (!/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) throw httpError(400, 'idempotency_required', '需要 8–128 字元的 Idempotency-Key');
+  const body = await readJson(request, 16 * 1024); const value = sharedUrl(body); const now = nowMs(env);
+  const replay = await env.DB.prepare('SELECT id,status,result FROM capture_jobs WHERE credential_id=? AND idempotency_key=?').bind(credential.id, idempotencyKey).first();
+  if (replay) return json({ ok: true, status: 'duplicate', jobId: replay.id, message: '此請求已收件，未重複建立' }, 200);
+  const duplicate = await env.DB.prepare(`SELECT id,status FROM capture_jobs WHERE user_id=? AND canonical_url=? AND created_at>? AND status NOT IN ('failed','expired') ORDER BY created_at DESC LIMIT 1`).bind(credential.user_id, value.canonical, now - 86_400_000).first();
+  if (duplicate) return json({ ok: true, status: 'duplicate', jobId: duplicate.id, message: '相同網址已在近期收件佇列中' }, 200);
+  const id = `capture_${randomToken(15)}`; const title = String(body.title || '').trim().slice(0, 160); const source = String(body.source || 'ios-shortcut').trim().slice(0, 80) || 'ios-shortcut';
+  try {
+    await env.DB.prepare(`INSERT INTO capture_jobs (id,user_id,credential_id,idempotency_key,canonical_url,original_url,shared_text,title,source,status,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,'pending',?,?)`)
+      .bind(id, credential.user_id, credential.id, idempotencyKey, value.canonical, value.raw, value.text, title, source, now, now + 30 * 86_400_000).run();
+  } catch {
+    const raced = await env.DB.prepare('SELECT id FROM capture_jobs WHERE credential_id=? AND idempotency_key=?').bind(credential.id, idempotencyKey).first();
+    if (raced) return json({ ok: true, status: 'duplicate', jobId: raced.id, message: '此請求已收件，未重複建立' }, 200);
+    throw httpError(503, 'capture_store_failed', '暫時無法寫入收件佇列，尚未收件');
+  }
+  return json({ ok: true, status: 'accepted', jobId: id, message: '已安全送入收件佇列；尚未完成裝置同步' }, 202);
+}
+
+async function claimCaptureJobs(request, env) {
+  return authenticatedResponse(request, env, { csrf: true }, async session => {
+    const now = nowMs(env); const requestedLimit = Number(new URL(request.url).searchParams.get('limit') || 20); const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(20, requestedLimit)) : 20;
+    await env.DB.prepare(`DELETE FROM capture_jobs WHERE user_id=? AND ((status='completed' AND completed_at<?) OR (status IN ('failed','expired') AND expires_at<?))`).bind(session.user_id, now - 7 * 86_400_000, now).run();
+    await env.DB.prepare(`UPDATE capture_jobs SET status='expired',last_error='retention_expired' WHERE user_id=? AND expires_at<=? AND status IN ('pending','leased')`).bind(session.user_id, now).run();
+    const candidates = await env.DB.prepare(`SELECT id FROM capture_jobs WHERE user_id=? AND (status='pending' OR (status='leased' AND lease_expires_at<=?)) AND expires_at>? ORDER BY created_at LIMIT ?`).bind(session.user_id, now, now, limit).all();
+    const jobs = [];
+    for (const candidate of candidates.results || []) {
+      const result = await env.DB.prepare(`UPDATE capture_jobs SET status='leased',lease_owner=?,lease_expires_at=?,attempt_count=attempt_count+1 WHERE id=? AND user_id=? AND (status='pending' OR (status='leased' AND lease_expires_at<=?))`).bind(session.public_id, now + 2 * 60_000, candidate.id, session.user_id, now).run();
+      if (!Number(result.meta?.changes || 0)) continue;
+      const job = await env.DB.prepare('SELECT id,canonical_url,original_url,shared_text,title,source,created_at,attempt_count FROM capture_jobs WHERE id=?').bind(candidate.id).first();
+      jobs.push({ id: job.id, url: job.canonical_url, originalUrl: job.original_url, text: job.shared_text, title: job.title, source: job.source, createdAt: job.created_at, attemptCount: job.attempt_count });
+    }
+    return json({ ok: true, jobs, leaseSeconds: 120 });
+  });
+}
+
+async function acknowledgeCaptureJob(request, env, id) {
+  return authenticatedResponse(request, env, { csrf: true }, async session => {
+    const body = await readJson(request); const now = nowMs(env);
+    if (body.status === 'completed') {
+      const result = await env.DB.prepare(`UPDATE capture_jobs SET status='completed',result=?,completed_at=?,lease_owner=NULL,lease_expires_at=NULL,last_error=NULL,original_url='',shared_text='',title='' WHERE id=? AND user_id=? AND status='leased' AND lease_owner=?`).bind(String(body.result || 'saved').slice(0, 64), now, id, session.user_id, session.public_id).run();
+      if (!Number(result.meta?.changes || 0)) throw httpError(409, 'lease_lost', '此收件工作已由另一裝置處理或租約已失效');
+    } else if (body.status === 'retry') {
+      const job = await env.DB.prepare('SELECT attempt_count FROM capture_jobs WHERE id=? AND user_id=? AND status=\'leased\' AND lease_owner=?').bind(id, session.user_id, session.public_id).first();
+      if (!job) throw httpError(409, 'lease_lost', '此收件工作已由另一裝置處理或租約已失效');
+      const nextStatus = Number(job.attempt_count) >= 10 ? 'failed' : 'pending';
+      await env.DB.prepare('UPDATE capture_jobs SET status=?,lease_owner=NULL,lease_expires_at=NULL,last_error=? WHERE id=?').bind(nextStatus, String(body.error || 'client_retry').slice(0, 160), id).run();
+    } else throw httpError(400, 'invalid_ack', '收件確認狀態無效');
+    return json({ ok: true });
+  });
+}
+
 async function accessTokenFor(session, env) {
   const credential = await env.DB.prepare('SELECT * FROM oauth_credentials WHERE user_id=?').bind(session.user_id).first(); const now = nowMs(env);
   try {
@@ -439,6 +544,12 @@ export async function fetchHandler(request, env, ctx = {}) {
     else if (path === '/api/logout' && request.method === 'POST') response = await logout(request, env);
     else if (path === '/api/auth/revoke' && request.method === 'POST') response = await revokeGrant(request, env);
     else if (/^\/api\/sessions\/[A-Za-z0-9_-]{8,64}$/.test(path) && request.method === 'DELETE') response = await revokeSession(request, env, path.split('/').pop());
+    else if (path === '/api/capture/credentials' && request.method === 'POST') response = await createCaptureCredential(request, env);
+    else if (path === '/api/capture/credentials' && request.method === 'GET') response = await listCaptureCredentials(request, env);
+    else if (/^\/api\/capture\/credentials\/[A-Za-z0-9_-]{8,64}$/.test(path) && request.method === 'DELETE') response = await revokeCaptureCredential(request, env, path.split('/').pop());
+    else if (path === '/api/capture' && request.method === 'POST') response = await submitCapture(request, env);
+    else if (path === '/api/capture/jobs/claim' && request.method === 'POST') response = await claimCaptureJobs(request, env);
+    else if (/^\/api\/capture\/jobs\/capture_[A-Za-z0-9_-]{8,64}\/ack$/.test(path) && request.method === 'POST') response = await acknowledgeCaptureJob(request, env, path.split('/').at(-2));
     else if (path.startsWith('/api/drive/')) response = await driveRoute(request, env, path);
     else if (path.startsWith('/api/')) response = json({ ok: false, error: { code: 'not_found', message: '找不到 API' } }, 404);
     else if (env.ASSETS) response = await env.ASSETS.fetch(request);

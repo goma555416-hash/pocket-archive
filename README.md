@@ -78,7 +78,7 @@ python -m http.server 5173
 
 ## iPhone 使用
 
-正式使用需 HTTPS。Safari 開啟部署網址 → 分享 →「加入主畫面」。安全分享捷徑採「分享內容 → 複製到剪貼簿 → 開啟 Pocket Archive → 點讀取剪貼簿 → 預覽確認」，不把私人網址放在 GET query；逐步設定與錯誤處理見 [IOS-SHORTCUT.md](./IOS-SHORTCUT.md)。純靜態網站無法從其他 App 背景直接寫入 Safari/PWA 的 IndexedDB。
+正式使用需 HTTPS。部署 v2.2 Worker 後可建立只有 `capture:create` 權限的捷徑憑證，完成「分享 → 存到 Pocket Archive → 已送入佇列」；App 下次開啟會冪等合併、確認工作並接續 Drive 同步。逐步設定與錯誤處理見 [IOS-SHORTCUT.md](./IOS-SHORTCUT.md)。純 GitHub Pages 回滾模式仍使用「複製 → 開啟 App → 讀取剪貼簿」。
 
 ## 部署
 

@@ -32,7 +32,7 @@ async function signedIdToken(privateKey, claims) {
 }
 
 async function currentAuthSchema() {
-  return `${await readFile(new URL('../worker/migrations/0001_auth.sql', import.meta.url), 'utf8')}\n${await readFile(new URL('../worker/migrations/0003_owner_session_security.sql', import.meta.url), 'utf8')}`;
+  return `${await readFile(new URL('../worker/migrations/0001_auth.sql', import.meta.url), 'utf8')}\n${await readFile(new URL('../worker/migrations/0002_capture.sql', import.meta.url), 'utf8')}\n${await readFile(new URL('../worker/migrations/0003_owner_session_security.sql', import.meta.url), 'utf8')}`;
 }
 
 async function oauthFixture({ ownerSub = '100000000000000000001', claimSub = ownerSub, bootstrapToken = '' } = {}) {
@@ -149,11 +149,14 @@ test('Worker OAuth code flow restores, rotates and revokes a secure session', as
   const errorRotationCookie = cookieValue(cookies(rotatedError), '__Host-pa_session'); assert.ok(errorRotationCookie); assert.notEqual(errorRotationCookie, rotatedSession);
   driveFailure = false;
   const currentCookies = `__Host-pa_session=${errorRotationCookie}; __Host-pa_csrf=${csrfCookie}`;
+  const ownerId = env.DB.database.prepare('SELECT id FROM users WHERE google_sub=?').get(env.OWNER_GOOGLE_SUB).id;
+  env.DB.database.prepare('INSERT INTO shortcut_credentials (id,user_id,token_hash,name,created_at,expires_at) VALUES (?,?,?,?,?,?)').run('shortcut-kept', ownerId, 'hash', 'iPhone', clock, clock + 86_400_000);
   const csrfRejected = await fetchHandler(new Request('https://app.example/api/logout', { method: 'POST', headers: { Cookie: currentCookies, Origin: 'https://evil.example', 'X-PA-CSRF': csrfCookie } }), env);
   assert.equal(csrfRejected.status, 403);
   const grantRevoked = await fetchHandler(new Request('https://app.example/api/auth/revoke', { method: 'POST', headers: { Cookie: currentCookies, Origin: 'https://app.example', 'X-PA-CSRF': csrfCookie } }), env);
   assert.equal(grantRevoked.status, 200); assert.equal(revoked, 1);
   assert.equal(env.DB.database.prepare('SELECT COUNT(*) AS count FROM oauth_credentials').get().count, 0, 'encrypted refresh token must be deleted locally');
+  assert.equal(env.DB.database.prepare('SELECT COUNT(*) AS count FROM shortcut_credentials WHERE revoked_at IS NULL').get().count, 1, 'Google grant revocation must not silently revoke independent shortcut credentials');
   const afterRevoke = await fetchHandler(new Request('https://app.example/api/session', { headers: { Cookie: currentCookies } }), env); assert.equal(afterRevoke.status, 401);
 });
 
