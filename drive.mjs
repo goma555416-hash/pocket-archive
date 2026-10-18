@@ -106,11 +106,14 @@ export class DriveApiError extends Error {
 }
 
 export class DriveApi {
-  constructor({ getAccessToken, fetchImpl = globalThis.fetch, sleep = delay, random = Math.random } = {}) {
+  constructor({ getAccessToken, fetchImpl, sleep = delay, random = Math.random } = {}) {
     if (typeof getAccessToken !== 'function') throw new Error('Drive API 缺少授權提供者');
-    if (typeof fetchImpl !== 'function') throw new Error('目前環境不支援網路請求');
+    const request = fetchImpl === undefined && typeof globalThis.fetch === 'function'
+      ? (...args) => globalThis.fetch(...args)
+      : fetchImpl;
+    if (typeof request !== 'function') throw new Error('目前環境不支援網路請求');
     this.getAccessToken = getAccessToken;
-    this.fetch = fetchImpl;
+    this.fetch = request;
     this.sleep = sleep;
     this.random = random;
   }
