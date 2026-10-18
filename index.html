@@ -132,6 +132,12 @@
       <div class="modal-heading"><div><div class="eyebrow subtle">OPTIONAL CLOUD SYNC</div><h2 id="cloud-heading">Google Drive 同步</h2></div><button type="button" data-close="cloud-dialog" class="icon-button" aria-label="關閉">✕</button></div>
       <div id="cloud-status" class="cloud-status" aria-live="polite"><strong>尚未連結 Google Drive</strong><span>本機收藏仍可完整使用。</span></div>
       <p class="privacy-note">只要求 <code>drive.file</code>。部署同來源後端時，Refresh Token 只以加密形式保存於 D1，Access Token 不交給瀏覽器；GitHub Pages 舊模式仍只把短效 Access Token 留在頁面記憶體。</p>
+      <section id="owner-bootstrap-section" class="cloud-section" aria-labelledby="owner-bootstrap-heading" hidden>
+        <h3 id="owner-bootstrap-heading">首次擁有者設定</h3>
+        <label id="owner-bootstrap-token-row">一次性綁定碼 <small>不會保存於瀏覽器；請勿放在網址、聊天或記錄中。</small><input id="owner-bootstrap-token" type="password" autocomplete="off" /></label>
+        <button id="owner-bootstrap" type="button" class="button primary">驗證並綁定此 Google 帳號</button>
+        <p id="owner-bootstrap-note" class="privacy-note" aria-live="polite"></p>
+      </section>
       <label id="legacy-google-settings">Google OAuth Web Client ID <small>只有純靜態相容模式需要；公開設定，不是 Client Secret。</small><input id="google-client-id" type="text" inputmode="text" autocomplete="off" placeholder="123456789-….apps.googleusercontent.com" /></label>
       <div class="form-row">
         <label>保留歷史備份數<input id="cloud-retention" type="number" min="1" max="30" value="5" /></label>
@@ -147,7 +153,7 @@
       <section id="device-sessions-section" class="cloud-section" aria-labelledby="device-sessions-heading" hidden><h3 id="device-sessions-heading">已登入裝置</h3><button id="refresh-device-sessions" type="button" class="button ghost small">更新裝置清單</button><div id="device-sessions"><p class="privacy-note">正在取得工作階段…</p></div></section>
       <section id="shortcut-section" class="cloud-section" aria-labelledby="shortcut-heading" hidden>
         <h3 id="shortcut-heading">iPhone 一鍵收藏</h3>
-        <p class="privacy-note">建立只能新增收件工作的有限憑證；它不能讀取收藏、刪除資料或呼叫 Google Drive。遺失 iPhone 時可在此單獨撤銷。</p>
+        <p class="privacy-note">建立只能新增收件工作的有限憑證；它不能讀取收藏、刪除資料或呼叫 Google Drive。它獨立於 Google 授權，「撤銷 Google 授權」不會暗中停用捷徑；遺失 iPhone 時請在此單獨撤銷。</p>
         <label>裝置名稱<input id="shortcut-device-name" type="text" maxlength="80" value="我的 iPhone" autocomplete="off" /></label>
         <button id="create-shortcut-credential" type="button" class="button outline">建立捷徑憑證</button>
         <div id="shortcut-token-once" class="preview-panel" hidden><strong>只顯示這一次</strong><p>請把憑證放入捷徑的 Authorization header，不可放在 URL。</p><textarea id="shortcut-token" rows="3" readonly aria-label="快捷收藏憑證"></textarea><button id="copy-shortcut-token" type="button" class="button ghost small">複製憑證</button></div>

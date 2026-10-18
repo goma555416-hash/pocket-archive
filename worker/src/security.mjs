@@ -4,6 +4,7 @@ const decoder = new TextDecoder();
 export const SESSION_COOKIE = '__Host-pa_session';
 export const CSRF_COOKIE = '__Host-pa_csrf';
 export const OAUTH_COOKIE = '__Host-pa_oauth';
+export const OWNER_SETUP_COOKIE = '__Host-pa_owner_setup';
 
 export function bytesToBase64Url(bytes) {
   let binary = '';
@@ -40,6 +41,16 @@ function encryptionKey(env, version) {
   if (Number(version) === current) return env.TOKEN_ENCRYPTION_KEY;
   if (Number(version) === Number(env.TOKEN_ENCRYPTION_KEY_PREVIOUS_VERSION)) return env.TOKEN_ENCRYPTION_KEY_PREVIOUS;
   return null;
+}
+
+export function encryptedSecretVersion(value) {
+  const match = /^v(\d+)\./.exec(String(value || ''));
+  return match ? Number(match[1]) : null;
+}
+
+export function secretNeedsReencryption(value, env) {
+  const version = encryptedSecretVersion(value);
+  return version !== null && version !== Number(env.TOKEN_ENCRYPTION_KEY_VERSION || 1);
 }
 
 async function importEncryptionKey(raw, cryptoObject = globalThis.crypto) {
@@ -119,12 +130,12 @@ export function json(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), { status, headers });
 }
 
-export function publicError(error) {
+export function publicError(error, extraHeaders = {}) {
   const status = Number(error?.status) || 500;
   const safeStatus = status >= 400 && status <= 599 ? status : 500;
   const code = error?.code || (safeStatus === 500 ? 'internal_error' : 'request_failed');
   const message = safeStatus === 500 ? '伺服器暫時無法完成要求' : String(error?.message || '要求失敗');
-  return json({ ok: false, error: { code, message } }, safeStatus);
+  return json({ ok: false, error: { code, message } }, safeStatus, extraHeaders);
 }
 
 export function withSecurityHeaders(response) {

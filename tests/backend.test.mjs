@@ -32,3 +32,16 @@ test('backend Drive client keeps file bytes behind same-origin API', async () =>
   assert.equal(calls[1].path, '/api/drive/files/drive-file-1/content');
   assert.equal(calls[1].options.headers['X-PA-Content-Length'], '3');
 });
+
+test('owner bootstrap is same-origin JSON and never places the secret in a URL', async () => {
+  const calls = [];
+  const client = new PocketBackendClient({ fetchImpl: async (url, options) => {
+    calls.push({ url, options });
+    return Response.json(url === '/api/owner/status' ? { ok: true, configured: false, bootstrapAvailable: true } : { ok: true, ready: true });
+  } });
+  const status = await client.ownerStatus(); assert.equal(status.configured, false);
+  await client.bootstrapOwner('one-time-secret');
+  assert.equal(calls[1].url, '/api/owner/bootstrap'); assert.equal(calls[1].options.method, 'POST');
+  assert.deepEqual(JSON.parse(calls[1].options.body), { token: 'one-time-secret' });
+  assert.equal(calls[1].url.includes('one-time-secret'), false);
+});
