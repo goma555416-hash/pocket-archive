@@ -1,0 +1,15 @@
+{
+  "name": "pocket-archive",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs && npm run check",
+    "test:e2e": "node tests/e2e.mjs",
+    "test:all": "npm test && npm run test:e2e",
+    "check": "node --check app.js && node --check lib.mjs && node --check db.mjs && node --check archive.mjs && node --check sw.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

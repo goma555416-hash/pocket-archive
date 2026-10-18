@@ -1,0 +1,26 @@
+# Private Pocket Archive exports and attachments
+pocket-archive-backup-*.json
+pocket-archive-backup-*.zip
+pocket-archive-inbox-*.json
+pocket-archive-inbox-*.zip
+organized*.json
+!examples/organized-example.json
+!examples/inbox-example.json
+private-data/
+exports/
+attachments/
+
+# Credentials and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Tool and OS output
+node_modules/
+coverage/
+test-results/
+playwright-report/
+.DS_Store
+Thumbs.db

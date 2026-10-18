@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#FBFAF7" />
-  <meta name="description" content="Pocket Archive — 你的個人收藏收件匣。快速保存連結，慢慢整理靈感。" />
+  <meta name="description" content="Pocket Archive — 可離線使用的私人收藏收件匣。" />
   <meta name="color-scheme" content="light" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
@@ -21,80 +21,126 @@
         <span><strong>Pocket Archive</strong><small>your personal collection</small></span>
       </a>
       <div class="side-label">COLLECTION</div>
-      <nav class="side-nav" id="side-nav">
+      <nav class="side-nav">
         <button class="nav-button is-active" data-view="inbox" type="button"><span>▣</span> 收件匣 <b id="nav-count-inbox">0</b></button>
         <button class="nav-button" data-view="saved" type="button"><span>◇</span> 已整理 <b id="nav-count-saved">0</b></button>
         <button class="nav-button" data-view="archived" type="button"><span>▤</span> 已封存 <b id="nav-count-archived">0</b></button>
         <button class="nav-button" data-view="all" type="button"><span>▦</span> 全部收藏 <b id="nav-count-all">0</b></button>
       </nav>
-      <div class="side-bottom">
-        <p>收藏值得留下的，<br>其他的慢慢整理。</p>
-        <span class="version">LOCAL FIRST · V1.2</span>
-      </div>
+      <div class="side-bottom"><p>收藏值得留下的，<br />其他的慢慢整理。</p><span class="version">LOCAL FIRST · V2</span></div>
     </aside>
 
     <div class="workspace">
       <header class="topbar">
         <div class="mobile-brand"><span class="brand-mark" aria-hidden="true"><img class="brand-symbol" src="./icons/icon.svg" alt="" /></span><strong>Pocket Archive</strong></div>
-        <span class="topbar-kicker">MY PRIVATE CORNER / 001</span>
+        <span class="topbar-kicker">LOCAL-FIRST / PRIVATE BY DEFAULT</span>
         <div class="topbar-actions">
-          <button class="button ghost small" id="import-button" type="button" title="匯入備份">匯入</button>
-          <button class="button ghost small" id="export-button" type="button" title="下載 JSON 備份">匯出備份 ↗</button>
+          <button class="button ghost small" id="ai-button" type="button">Codex 整理</button>
+          <button class="button ghost small" id="backup-button" type="button">備份／還原</button>
         </div>
       </header>
 
       <main class="main-content">
         <section class="hero" aria-labelledby="page-heading">
-          <div>
-            <div class="eyebrow"><span class="eyebrow-line"></span> A PLACE FOR ALL YOUR FINDS</div>
-            <h1 id="page-heading">今天，<em>收藏了什麼？</em></h1>
-            <p>有趣的文章、喜歡的設計、想玩的遊戲。<br>先放進來，等有空再好好看看。</p>
+          <div><div class="eyebrow"><span class="eyebrow-line"></span> A PLACE FOR ALL YOUR FINDS</div><h1 id="page-heading">今天，<em>收藏了什麼？</em></h1><p>網址、社群貼文與圖片先放進來，之後再慢慢整理。</p></div>
+          <div class="hero-actions">
+            <button type="button" id="batch-button" class="button outline large">＋ 批次網址</button>
+            <button type="button" id="image-button" class="button outline large">＋ 圖片</button>
+            <button type="button" id="new-button" class="button primary large">＋ 單筆收藏</button>
           </div>
-          <button type="button" id="new-button" class="button primary large"><span aria-hidden="true">＋</span> 新增收藏</button>
+        </section>
+
+        <section class="quick-capture" aria-label="快速收藏">
+          <span>從 iPhone 捷徑回來？</span>
+          <button id="paste-inbox" class="text-action" type="button">讀取剪貼簿並預覽</button>
+          <small>只有你按下按鈕後才會讀取，不透過網址參數傳送私人內容。</small>
         </section>
 
         <section class="stats-row" aria-label="收藏統計">
           <div class="stat"><span class="stat-name">總收藏</span><strong id="stat-all">0</strong><span class="stat-unit">COLLECTED</span></div>
           <div class="stat"><span class="stat-name">待整理</span><strong id="stat-inbox">0</strong><span class="stat-unit">INBOX</span></div>
           <div class="stat"><span class="stat-name">已整理</span><strong id="stat-saved">0</strong><span class="stat-unit">ORGANIZED</span></div>
-          <div class="stat tip"><span aria-hidden="true">✳</span><p>一個好的收藏系統，<br>應該讓你更輕鬆。</p></div>
+          <div class="stat tip"><span aria-hidden="true">✳</span><p id="storage-summary">資料只存在這個瀏覽器。<br />請定期下載完整備份。</p></div>
         </section>
 
         <section class="collection-section" aria-label="收藏內容">
           <div class="section-heading"><div><div class="eyebrow subtle">YOUR LIBRARY</div><h2 id="list-title">收件匣 <small id="result-count">0</small></h2></div><span id="filter-caption">尚未整理的收藏</span></div>
           <div class="toolbar">
-            <label class="search-wrap" for="search-input"><span aria-hidden="true">⌕</span><input id="search-input" type="search" placeholder="搜尋標題、標籤、網址或備註…" autocomplete="off" /><kbd>/</kbd></label>
-            <label class="select-wrap"><span class="sr-only">依類型篩選</span><select id="type-filter"><option value="all">所有類型</option><option>文章</option><option>影片</option><option>圖片</option><option>遊戲</option><option>香水</option><option>工具</option><option>其他</option></select></label>
-            <label class="select-wrap"><span class="sr-only">排序方式</span><select id="sort-filter"><option value="new">最新收藏</option><option value="old">最早收藏</option><option value="title">標題 A–Z</option></select></label>
+            <label class="search-wrap" for="search-input"><span aria-hidden="true">⌕</span><input id="search-input" type="search" placeholder="搜尋標題、分類、標籤、網址或備註…" autocomplete="off" /><kbd>/</kbd></label>
+            <label class="select-wrap"><span class="sr-only">依類型篩選</span><select id="type-filter"><option value="all">所有類型</option><option>文章</option><option>影片</option><option>社群貼文</option><option>圖片</option><option>遊戲</option><option>香水</option><option>工具</option><option>其他</option></select></label>
+            <label class="select-wrap"><span class="sr-only">排序方式</span><select id="sort-filter"><option value="new">最新收藏</option><option value="old">最早收藏</option><option value="title">標題 A–Z</option><option value="starred">星號優先</option></select></label>
           </div>
+          <div id="selection-bar" class="selection-bar" hidden>
+            <strong><span id="selection-count">0</span> 筆已選</strong>
+            <button type="button" data-bulk="saved">標記已整理</button><button type="button" data-bulk="archived">封存</button><button type="button" data-bulk="star">切換星號</button><button type="button" id="bulk-edit-button">分類／標籤</button><button type="button" id="selection-clear">取消選取</button>
+          </div>
+          <div class="select-all-row"><label><input type="checkbox" id="select-visible" /> 選取目前結果</label></div>
           <div id="cards" class="cards-grid" aria-live="polite"></div>
-          <div id="empty-state" class="empty-state" hidden><div class="empty-graphic" aria-hidden="true">✦</div><h3 id="empty-title">這裡還沒有收藏</h3><p id="empty-message">看到喜歡的東西，就先把網址放進來。</p><button class="button outline" id="empty-add" type="button">＋ 新增第一筆收藏</button></div>
+          <div id="empty-state" class="empty-state" hidden><div class="empty-graphic" aria-hidden="true">✦</div><h3 id="empty-title">這裡還沒有收藏</h3><p id="empty-message">看到喜歡的東西，就先把它放進來。</p><button class="button outline" id="empty-add" type="button">＋ 新增第一筆收藏</button></div>
         </section>
-        <footer class="footer"><span>POCKET ARCHIVE · MADE FOR ONE</span><span>所有收藏僅儲存在此瀏覽器 · 記得定期備份</span></footer>
+        <footer class="footer"><span>POCKET ARCHIVE · MADE FOR ONE</span><span>IndexedDB 本機儲存 · 無帳號 · 無自動上傳</span></footer>
       </main>
     </div>
   </div>
 
-  <nav class="mobile-nav" id="mobile-nav" aria-label="手機導覽">
-    <button class="mobile-nav-button active" type="button" data-view="inbox"><span>▣</span>收件匣</button>
-    <button class="mobile-nav-button" type="button" data-view="saved"><span>◇</span>已整理</button>
-    <button class="mobile-nav-button" type="button" data-view="all"><span>▦</span>全部</button>
-    <button class="mobile-nav-button" type="button" id="mobile-new"><span>＋</span>新增</button>
+  <nav class="mobile-nav" aria-label="手機導覽">
+    <button class="mobile-nav-button active" type="button" data-view="inbox"><span>▣</span>收件匣</button><button class="mobile-nav-button" type="button" data-view="saved"><span>◇</span>已整理</button><button class="mobile-nav-button" type="button" data-view="all"><span>▦</span>全部</button><button class="mobile-nav-button" type="button" id="mobile-new"><span>＋</span>新增</button>
   </nav>
 
   <dialog id="entry-dialog" aria-labelledby="dialog-heading">
     <form id="entry-form" class="entry-form">
-      <div class="modal-heading"><div><div class="eyebrow subtle">KEEP WHAT MATTERS</div><h2 id="dialog-heading">新增收藏</h2></div><button type="button" id="dialog-close" class="icon-button" aria-label="關閉">✕</button></div>
-      <input type="hidden" name="entryId" id="entry-id" />
-      <label>收藏網址 <span>*</span><div class="url-entry"><input type="text" id="entry-url" name="url" inputmode="url" placeholder="https://example.com/…" required /><button type="button" id="paste-url" title="從剪貼簿貼上">貼上</button></div></label>
-      <label>標題 <small>選填；留白將使用網站網域</small><input type="text" id="entry-title" name="title" maxlength="160" placeholder="這個收藏叫什麼？" /></label>
-      <div class="form-row"><label>類型<select name="type" id="entry-type"><option>文章</option><option>影片</option><option>圖片</option><option>遊戲</option><option>香水</option><option>工具</option><option>其他</option></select></label><label>狀態<select name="status" id="entry-status"><option value="inbox">待整理</option><option value="saved">已整理</option><option value="archived">已封存</option></select></label></div>
-      <label>標籤 <small>使用逗號分隔</small><input type="text" id="entry-tags" name="tags" maxlength="400" placeholder="例如：靈感、設計、稍後閱讀" /></label>
-      <label>備註 <small>選填</small><textarea id="entry-note" name="note" rows="3" maxlength="3000" placeholder="為什麼想收藏它？"></textarea></label>
-      <div class="modal-footer"><button type="button" id="dialog-cancel" class="button ghost">取消</button><button class="button primary" type="submit" id="save-button">儲存收藏 →</button></div>
+      <div class="modal-heading"><div><div class="eyebrow subtle">KEEP WHAT MATTERS</div><h2 id="dialog-heading">新增收藏</h2></div><button type="button" data-close="entry-dialog" class="icon-button" aria-label="關閉">✕</button></div>
+      <input type="hidden" id="entry-id" />
+      <input type="hidden" id="entry-preview-url" />
+      <label>收藏網址 <span>*</span><div class="url-entry"><input type="url" id="entry-url" inputmode="url" placeholder="https://example.com/…" required /><button type="button" id="paste-url">貼上</button></div></label>
+      <button type="button" id="fetch-title" class="inline-help">在網站允許 CORS 時嘗試讀取標題</button>
+      <label>標題 <small>選填；留白將使用網站網域</small><input type="text" id="entry-title" maxlength="160" /></label>
+      <div class="form-row"><label>類型<select id="entry-type"><option>文章</option><option>影片</option><option>社群貼文</option><option>圖片</option><option>遊戲</option><option>香水</option><option>工具</option><option>其他</option></select></label><label>狀態<select id="entry-status"><option value="inbox">待整理</option><option value="saved">已整理</option><option value="archived">已封存</option></select></label></div>
+      <label>分類 <small>例如：工作參考</small><input type="text" id="entry-category" maxlength="80" /></label>
+      <label>標籤 <small>使用逗號分隔，可跨分類</small><input type="text" id="entry-tags" maxlength="600" /></label>
+      <label>備註 <small>原始備註不會被 Codex 建議覆寫</small><textarea id="entry-note" rows="3" maxlength="5000"></textarea></label>
+      <label class="check-label"><input id="entry-starred" type="checkbox" /> 加上星號</label>
+      <div class="modal-footer"><button type="button" data-close="entry-dialog" class="button ghost">取消</button><button class="button primary" type="submit" id="save-button">儲存收藏 →</button></div>
     </form>
   </dialog>
-  <input type="file" id="backup-file" accept=".json,application/json" hidden />
+
+  <dialog id="batch-dialog" aria-labelledby="batch-heading" class="wide-dialog">
+    <form class="entry-form" id="batch-form"><div class="modal-heading"><div><div class="eyebrow subtle">BULK CAPTURE</div><h2 id="batch-heading">批次加入網址</h2></div><button type="button" data-close="batch-dialog" class="icon-button" aria-label="關閉">✕</button></div>
+      <label>每行一個網址 <small>最多 500 行；會先預覽有效、重複與無效項目</small><textarea id="batch-text" rows="8" placeholder="https://example.com/one&#10;https://example.com/two"></textarea></label>
+      <button type="button" id="batch-preview-button" class="button outline">更新預覽</button><div id="batch-preview" class="preview-panel" aria-live="polite"></div>
+      <div class="modal-footer"><button type="button" data-close="batch-dialog" class="button ghost">取消</button><button class="button primary" type="submit" id="batch-save" disabled>略過錯誤並匯入</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="image-dialog" aria-labelledby="image-heading" class="wide-dialog">
+    <form class="entry-form" id="image-form"><div class="modal-heading"><div><div class="eyebrow subtle">LOCAL ATTACHMENTS</div><h2 id="image-heading">加入圖片</h2></div><button type="button" data-close="image-dialog" class="icon-button" aria-label="關閉">✕</button></div>
+      <label id="drop-zone" class="drop-zone">拖曳圖片到這裡，或從照片／檔案選取<input id="image-files" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif" multiple /></label>
+      <p class="privacy-note">每張上限 25 MB。原圖存於 IndexedDB，不會放進 localStorage 或自動上傳。</p><div id="image-preview" class="preview-panel" aria-live="polite"></div>
+      <div class="modal-footer"><button type="button" data-close="image-dialog" class="button ghost">取消</button><button class="button primary" type="submit" id="image-save" disabled>儲存有效圖片</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="backup-dialog" aria-labelledby="backup-heading">
+    <div class="entry-form"><div class="modal-heading"><div><div class="eyebrow subtle">PORTABLE & OFFLINE</div><h2 id="backup-heading">備份與還原</h2></div><button type="button" data-close="backup-dialog" class="icon-button" aria-label="關閉">✕</button></div>
+      <p>無圖片時下載 JSON；含附件時下載完整 ZIP。匯入會先驗證並顯示合併、略過與衝突數量。</p><div class="action-stack"><button id="export-backup" class="button primary" type="button">下載完整備份</button><button id="import-backup" class="button outline" type="button">選擇 JSON／ZIP 還原</button><button id="persist-storage" class="button ghost" type="button">請求瀏覽器保留本機資料</button><button id="undo-ai" class="button ghost" type="button">復原上次 Codex 套用</button></div><p id="backup-status" class="privacy-note"></p>
+    </div>
+  </dialog>
+
+  <dialog id="ai-dialog" aria-labelledby="ai-heading" class="wide-dialog">
+    <div class="entry-form"><div class="modal-heading"><div><div class="eyebrow subtle">MANUAL CODEX WORKFLOW</div><h2 id="ai-heading">Codex 批次整理</h2></div><button type="button" data-close="ai-dialog" class="icon-button" aria-label="關閉">✕</button></div>
+      <ol class="workflow"><li>選取項目（未選時使用全部待整理）並匯出；含圖片會產生 ZIP。</li><li>依 <code>CODEX-ORGANIZE-PROMPT.md</code> 在本機 Codex CLI 或你明確選擇的 Codex Cloud 處理。</li><li>匯入 <code>organized.json</code>，逐項預覽後才套用；原始網址、備註與附件永不覆寫。</li></ol>
+      <div class="action-stack horizontal"><button id="export-ai" type="button" class="button primary">匯出待整理批次</button><button id="import-ai" type="button" class="button outline">匯入 organized.json</button></div><div id="ai-preview" class="preview-panel" aria-live="polite"></div><div class="modal-footer"><button id="apply-ai" type="button" class="button primary" hidden>套用勾選建議</button></div>
+    </div>
+  </dialog>
+
+  <dialog id="bulk-dialog" aria-labelledby="bulk-heading">
+    <form class="entry-form" id="bulk-form"><div class="modal-heading"><h2 id="bulk-heading">批次分類與標籤</h2><button type="button" data-close="bulk-dialog" class="icon-button" aria-label="關閉">✕</button></div><label>分類 <small>留白則不變更</small><input id="bulk-category" maxlength="80" /></label><label>附加標籤 <small>不會移除既有標籤</small><input id="bulk-tags" maxlength="600" /></label><div class="modal-footer"><button type="button" data-close="bulk-dialog" class="button ghost">取消</button><button class="button primary" type="submit">套用</button></div></form>
+  </dialog>
+
+  <dialog id="confirm-dialog" aria-labelledby="confirm-heading" class="wide-dialog"><div class="entry-form"><div class="modal-heading"><h2 id="confirm-heading">匯入預覽</h2><button type="button" data-close="confirm-dialog" class="icon-button" aria-label="關閉">✕</button></div><div id="confirm-content" class="preview-panel"></div><div class="modal-footer"><button type="button" data-close="confirm-dialog" class="button ghost">取消</button><button id="confirm-import" type="button" class="button primary">確認匯入</button></div></div></dialog>
+
+  <input type="file" id="backup-file" accept=".json,.zip,application/json,application/zip" aria-label="選擇 Pocket Archive 備份檔" hidden />
+  <input type="file" id="organized-file" accept=".json,application/json" aria-label="選擇 Codex organized JSON" hidden />
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script type="module" src="./app.js"></script>
 </body>

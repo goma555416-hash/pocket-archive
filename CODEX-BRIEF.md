@@ -1,9 +1,22 @@
-# Pocket Archive — Codex 開發交接摘要（v1.3，全功能任務）
+# Pocket Archive — 開發交接摘要（v2）
 
-**最高優先任務：`MASTER-TASK.md`**；啟動時可直接貼上 `CODEX-START.md` 的文字。過去 v1.2 的「先做一個小 PR、等使用者核准下一個 PR」工作方式**已被取代**。
+`MASTER-TASK.md` 所列可自主完成的 P0／P1 已落實：IndexedDB、圖片、批次網址、分類與批次編輯、JSON/ZIP 完整備份、人工 Codex 整理與復原、iPhone 安全捷徑文件、PWA 離線及 Pages 部署準備。
 
-- 目標：使用者只做最後 iPhone 與 Windows 實機驗收；Codex 自主完成主要功能、品質驗證、文檔與一個最終 PR。
-- 現有實作：基本 URL 單筆收藏、搜尋/標籤/狀態、localStorage、JSON 備份、PWA 初版、A3 icon 與 Butter Yellow × Periwinkle 主題。
-- 必須補齊：大量 URL 與圖片收藏、真正安全可靠的附件儲存／備份、AI 整理 JSON/ZIP 工作流程、結果匯入預覽/復原、iPhone 使用與快捷分享、HTTPS 部署準備、跨裝置手動資料轉移。
-- 不接 AI API、不中途反覆等核准、不開發 Android、不重做 Icon。
-- 詳細驗收和風險邊界請閱讀 `MASTER-TASK.md`。外部憑證/帳號/實機才能完成的事項可列成最後待辦，不得因此停止其他工作。
+開始維護前依序閱讀 `AGENTS.md`、`MASTER-TASK.md`、`README.md`、`DESIGN-SPEC.md`、`AI-BATCH-SPEC.md`。品牌配色與 A3 Icon 仍是不可重設的使用者決定。
+
+快速驗證：
+
+```bash
+npm run test:all
+node scripts/validate-organized.mjs examples/organized-example.json examples/inbox-example.json
+```
+
+主要模組：
+
+- `lib.mjs`：資料/schema/URL/批次/AI 純邏輯。
+- `db.mjs`：IndexedDB、附件與保留式 v1 遷移。
+- `archive.mjs`：零依賴 ZIP store encoder、store/deflate reader、CRC 與安全路徑。
+- `app.js`：UI 工作流。
+- `tests/e2e.mjs`：無外部套件的 Chromium CDP 整合測試。
+
+不要提交 Pocket Archive 備份、inbox 匯出、`organized.json` 或真實圖片；`.gitignore` 已提供防線，提交前仍需人工檢查。

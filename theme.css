@@ -56,8 +56,8 @@ h1 em {color:#6079B5}
 .empty-state {border-color:#CCD6EF;background:#FBFBFE}
 .empty-graphic {background:linear-gradient(135deg,#FFF2C9,#CBD7EF);color:#526AA5}
 .empty-state p,.footer {color:#7A879C}
-#entry-dialog {border-color:#E0E6F3;box-shadow:0 30px 90px rgba(32,42,69,.25)}
-#entry-dialog::backdrop {background:rgba(27,37,67,.64)}
+dialog {border-color:#E0E6F3;box-shadow:0 30px 90px rgba(32,42,69,.25)}
+dialog::backdrop {background:rgba(27,37,67,.64)}
 .icon-button {background:#F1F3FB;color:#637498}
 .entry-form input,.entry-form select,.entry-form textarea {background:#FEFEFF;border-color:#DFE5F1}
 .entry-form input:focus,.entry-form select:focus,.entry-form textarea:focus {border-color:#849CD3;box-shadow:0 0 0 3px #E8EDFC}
