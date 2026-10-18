@@ -67,6 +67,10 @@ External 且 Publishing status 為 **Testing** 的專案，如果取得 `drive.f
 - XSS：既有 UI 使用 escaping，並新增 CSP。XSS 仍可能代表使用者操作，因此需持續避免 `innerHTML` 注入未轉義值。
 - D1 不是私人收藏備份；D1 遺失時可重新登入，不應造成 IndexedDB／Drive 收藏消失。
 
+## 快速收件佇列
+
+Shortcut credential 只具 `capture:create`，資料庫只保存 secret 的 SHA-256。每分鐘最多 30 次、每次必須帶 8–128 字元 `Idempotency-Key`，API 會依既有 URL 正規化移除 tracking parameters。待處理工作保留 30 天；完成時立即清除原始分享文字／標題，完成狀態 7 天後刪除。App 以兩分鐘 lease 取得最多 20 筆，先完成 IndexedDB 原子寫入再 ack；另一裝置不能同時取得同一工作。失敗會釋放重試，十次後標記 failed 而不靜默遺失原始提交。
+
 ## 官方來源與研究限制
 
 - [Google OAuth 2.0 for Web Server Applications](https://developers.google.com/identity/protocols/oauth2/web-server)

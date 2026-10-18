@@ -145,6 +145,14 @@
       <section class="cloud-section" aria-labelledby="backup-history-heading"><h3 id="backup-history-heading">歷史備份</h3><div id="cloud-backup-list"><p class="privacy-note">連結後顯示由 Pocket Archive 建立的備份。</p></div></section>
       <section class="cloud-section" aria-labelledby="sync-conflict-heading"><h3 id="sync-conflict-heading">同步衝突</h3><div id="sync-conflicts"><p class="privacy-note">目前沒有待處理的同步衝突。</p></div></section>
       <section id="device-sessions-section" class="cloud-section" aria-labelledby="device-sessions-heading" hidden><h3 id="device-sessions-heading">已登入裝置</h3><button id="refresh-device-sessions" type="button" class="button ghost small">更新裝置清單</button><div id="device-sessions"><p class="privacy-note">正在取得工作階段…</p></div></section>
+      <section id="shortcut-section" class="cloud-section" aria-labelledby="shortcut-heading" hidden>
+        <h3 id="shortcut-heading">iPhone 一鍵收藏</h3>
+        <p class="privacy-note">建立只能新增收件工作的有限憑證；它不能讀取收藏、刪除資料或呼叫 Google Drive。遺失 iPhone 時可在此單獨撤銷。</p>
+        <label>裝置名稱<input id="shortcut-device-name" type="text" maxlength="80" value="我的 iPhone" autocomplete="off" /></label>
+        <button id="create-shortcut-credential" type="button" class="button outline">建立捷徑憑證</button>
+        <div id="shortcut-token-once" class="preview-panel" hidden><strong>只顯示這一次</strong><p>請把憑證放入捷徑的 Authorization header，不可放在 URL。</p><textarea id="shortcut-token" rows="3" readonly aria-label="快捷收藏憑證"></textarea><button id="copy-shortcut-token" type="button" class="button ghost small">複製憑證</button></div>
+        <div id="shortcut-credentials"><p class="privacy-note">尚未建立快捷收藏憑證。</p></div>
+      </section>
     </div>
   </dialog>
 

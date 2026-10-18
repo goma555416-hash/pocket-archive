@@ -21,6 +21,7 @@ const state = {
   cloudPassphrase: '', auth: null, drive: null, workspace: null, backupService: null, aiExchange: null, syncService: null,
   cloudUser: null, cloudBusy: false, backupTimer: null, syncTimer: null,
   backend: null, backendAvailable: false, backendSession: null, backendSessions: [],
+  captureCredentials: [], captureBusy: false,
   googleIdentityStatus: 'idle', googleIdentityPromise: null
 };
 const names = { inbox: ['收件匣', '尚未整理的收藏'], saved: ['已整理', '已經整理好的收藏'], archived: ['已封存', '暫時收起的收藏'], all: ['全部收藏', '這裡收著所有值得留下的事物'] };
@@ -437,13 +438,14 @@ function renderCloudStatus() {
   status.className = `cloud-status ${connected ? 'is-connected' : ''}`;
   status.innerHTML = connected
     ? `<strong>已連結 ${escapeHtml(state.cloudUser?.emailAddress || 'Google Drive')}</strong><span>最近同步：${escapeHtml(lastSync)} · 最近備份：${escapeHtml(lastBackup)}</span>`
-    : `<strong>${state.backendAvailable ? '尚未登入 Google Drive' : '尚未連結 Google Drive'}</strong><span>本機收藏仍可完整使用；不會假裝已同步。</span>`;
+    : `<strong>${state.backendSession ? 'Google Drive 需要重新驗證' : state.backendAvailable ? '尚未登入 Google Drive' : '尚未連結 Google Drive'}</strong><span>本機收藏仍可完整使用；不會假裝已同步。</span>`;
   const connectButton = $('#cloud-connect'); connectButton.hidden = connected; connectButton.disabled = !connected && (state.cloudBusy || (!state.backendAvailable && state.googleIdentityStatus === 'loading'));
   connectButton.textContent = state.backendAvailable ? '登入並連結 Google Drive' : state.googleIdentityStatus === 'loading' ? '正在準備 Google 登入…' : '連結 Google Drive';
   $('#cloud-disconnect').hidden = !connected;
   $('#cloud-revoke-grant').hidden = !(connected && state.backendAvailable);
   $('#legacy-google-settings').hidden = state.backendAvailable;
   $('#device-sessions-section').hidden = !state.backendAvailable || !state.backendSession;
+  $('#shortcut-section').hidden = !state.backendAvailable || !state.backendSession;
   $$('[data-requires-cloud]').forEach(button => { button.disabled = !connected || state.cloudBusy; });
   $('#cloud-passphrase-row').hidden = !$('#cloud-encryption')?.checked;
   renderConflicts();
@@ -579,16 +581,60 @@ async function refreshBackendSessions() {
   } catch (error) { $('#device-sessions').textContent = `無法取得裝置清單：${error.message}`; }
 }
 
+async function refreshCaptureCredentials() {
+  if (!state.backendSession) return;
+  try {
+    const result = await state.backend.listCaptureCredentials(); state.captureCredentials = result.credentials || [];
+    $('#shortcut-credentials').innerHTML = state.captureCredentials.length ? `<ul class="preview-list">${state.captureCredentials.map(item => `<li><b>${escapeHtml(item.name)}</b><span>${item.revoked ? '已撤銷' : new Date(item.expiresAt).getTime() <= Date.now() ? '已到期' : `到期：${escapeHtml(new Date(item.expiresAt).toLocaleDateString('zh-TW'))}`}${!item.revoked ? `<button type="button" class="inline-button" data-revoke-capture="${escapeHtml(item.id)}">撤銷</button>` : ''}</span></li>`).join('')}</ul>` : '<p class="privacy-note">尚未建立快捷收藏憑證。</p>';
+  } catch (error) { $('#shortcut-credentials').textContent = `無法取得快捷憑證：${error.message}`; }
+}
+
+async function createCaptureCredential() {
+  const name = $('#shortcut-device-name').value.trim() || '我的 iPhone';
+  try {
+    const result = await state.backend.createCaptureCredential(name, 180);
+    $('#shortcut-token').value = result.token; $('#shortcut-token-once').hidden = false;
+    await refreshCaptureCredentials(); toast('已建立只能新增收件工作的捷徑憑證；請立即安全地放入捷徑');
+  } catch (error) { toast(`建立捷徑憑證失敗：${error.message}`, 8000); }
+}
+
+async function importCaptureJobs() {
+  if (!state.backendSession || state.captureBusy) return;
+  state.captureBusy = true;
+  let jobs = [];
+  try {
+    jobs = (await state.backend.claimCaptureJobs(20)).jobs || [];
+    if (!jobs.length) return;
+    const known = new Set(state.entries.filter(entry => entry.url).map(entry => entry.url)); const additions = []; const duplicates = [];
+    for (const job of jobs) {
+      if (known.has(job.url)) { duplicates.push(job); continue; }
+      known.add(job.url);
+      const note = String(job.text || '').replace(job.originalUrl || job.url, '').trim().slice(0, 5000);
+      additions.push({ job, entry: createEntry({ url: job.url, originalUrl: job.originalUrl || job.url, title: job.title, note, type: inferType(job.url), source: displayHost(job.url) }) });
+    }
+    const saved = !additions.length || await persistEntries([...additions.map(item => item.entry), ...state.entries]);
+    if (!saved) {
+      await Promise.allSettled(additions.map(item => state.backend.retryCaptureJob(item.job.id, 'indexeddb_write_failed')));
+      return;
+    }
+    await Promise.allSettled([...duplicates.map(job => state.backend.acknowledgeCaptureJob(job.id, 'duplicate')), ...additions.map(item => state.backend.acknowledgeCaptureJob(item.job.id, 'saved'))]);
+    toast(`快速收藏已收入 ${additions.length} 筆${duplicates.length ? `；${duplicates.length} 筆本機重複已確認` : ''} ✓`);
+  } catch (error) { $('#cloud-backup-note').textContent = `快速收件待重試：${error.message}`; }
+  finally { state.captureBusy = false; }
+}
+
 async function restoreBackendSession() {
   state.backend = new PocketBackendClient();
   const detected = await state.backend.detectSession(); state.backendAvailable = detected.available; state.backendSession = detected.session;
   if (!detected.available) { if (isValidGoogleClientId(state.cloudSettings.clientId)) preloadGoogleIdentity(); return; }
   if (!detected.session) { renderCloudStatus(); return; }
-  state.drive = new BackendDriveApi(state.backend); state.workspace = await state.drive.ensureWorkspace();
-  state.backupService = new CloudBackupService(state.drive, state.workspace); state.aiExchange = new CloudAiExchange(state.drive, state.workspace); state.syncService = new CloudSyncService(state.drive, state.workspace);
   state.cloudUser = { emailAddress: detected.session.user?.email, displayName: detected.session.user?.displayName };
-  await state.repository.setMeta('drive-workspace', state.workspace); await refreshBackendSessions();
-  renderCloudStatus(); scheduleAutoBackup(900); scheduleAutoSync(1500);
+  state.drive = new BackendDriveApi(state.backend);
+  try {
+    state.workspace = await state.drive.ensureWorkspace(); state.backupService = new CloudBackupService(state.drive, state.workspace); state.aiExchange = new CloudAiExchange(state.drive, state.workspace); state.syncService = new CloudSyncService(state.drive, state.workspace);
+    await state.repository.setMeta('drive-workspace', state.workspace); scheduleAutoBackup(900); scheduleAutoSync(1500);
+  } catch (error) { state.drive = null; state.workspace = null; $('#cloud-backup-note').textContent = `Drive 授權需處理：${error.message}`; }
+  await Promise.all([refreshBackendSessions(), refreshCaptureCredentials()]); renderCloudStatus(); await importCaptureJobs();
 }
 
 function scheduleAutoBackup(delayMs = 6000) {
@@ -764,6 +810,8 @@ function bindEvents() {
   $('#export-ai').addEventListener('click', exportForCodex); $('#import-ai').addEventListener('click', () => $('#organized-file').click()); $('#organized-file').addEventListener('change', importOrganized); $('#apply-ai').addEventListener('click', applyOrganized); $('#undo-ai').addEventListener('click', undoAi);
   $('#cloud-connect').addEventListener('click', connectDrive); $('#cloud-disconnect').addEventListener('click', disconnectDrive);
   $('#cloud-revoke-grant').addEventListener('click', revokeCloudGrant); $('#refresh-device-sessions').addEventListener('click', refreshBackendSessions);
+  $('#create-shortcut-credential').addEventListener('click', createCaptureCredential);
+  $('#copy-shortcut-token').addEventListener('click', async () => { try { await navigator.clipboard.writeText($('#shortcut-token').value); toast('捷徑憑證已複製；請勿貼到聊天、網址或公開筆記'); } catch { $('#shortcut-token').select(); toast('無法自動複製，已選取憑證文字'); } });
   $('#google-client-id').addEventListener('input', event => { if (state.googleIdentityStatus === 'ready' && isValidGoogleClientId(event.target.value.trim())) prepareGoogleAuth(event.target.value.trim()); });
   $('#cloud-save-settings').addEventListener('click', async () => { await saveCloudSettingsFromForm(); renderCloudStatus(); toast('雲端設定已保存；密碼只保留到本頁關閉'); });
   $('#cloud-backup-now').addEventListener('click', () => runCloudBackup(false)); $('#cloud-sync-now').addEventListener('click', () => syncNow(false));
@@ -777,6 +825,7 @@ function bindEvents() {
   $('#bulk-edit-button').addEventListener('click', () => { $('#bulk-form').reset(); openDialog('bulk-dialog'); }); $('#bulk-form').addEventListener('submit', async event => { event.preventDefault(); const category = $('#bulk-category').value.trim(); const tags = cleanTags($('#bulk-tags').value); await updateEntries([...state.selected], entry => ({ ...entry, category: category || entry.category, tags: cleanTags([...entry.tags, ...tags]) }), '批次分類與標籤已更新'); closeDialog('bulk-dialog'); });
   document.addEventListener('change', event => { const input = event.target.closest('[data-select-id]'); if (!input) return; input.checked ? state.selected.add(input.dataset.selectId) : state.selected.delete(input.dataset.selectId); render(); });
   document.addEventListener('click', event => {
+    const revokeCaptureButton = event.target.closest('[data-revoke-capture]'); if (revokeCaptureButton) { state.backend.revokeCaptureCredential(revokeCaptureButton.dataset.revokeCapture).then(() => { toast('快捷收藏憑證已撤銷'); return refreshCaptureCredentials(); }).catch(error => toast(`撤銷失敗：${error.message}`, 8000)); return; }
     const revokeSessionButton = event.target.closest('[data-revoke-session]'); if (revokeSessionButton) { state.backend.revokeSession(revokeSessionButton.dataset.revokeSession).then(() => { toast('裝置工作階段已撤銷'); return refreshBackendSessions(); }).catch(error => toast(`撤銷失敗：${error.message}`, 8000)); return; }
     const restoreButton = event.target.closest('[data-cloud-restore]'); if (restoreButton) { previewCloudRestore(Number(restoreButton.dataset.cloudRestore)); return; }
     const conflictButton = event.target.closest('[data-conflict-choice]'); if (conflictButton) { handleConflictChoice(Number(conflictButton.dataset.conflictIndex), conflictButton.dataset.conflictChoice); return; }
@@ -785,8 +834,8 @@ function bindEvents() {
     if (button.dataset.action === 'edit') openEditor(entry); else if (button.dataset.action === 'delete') deleteEntry(entry.id); else if (button.dataset.action === 'star') updateEntries([entry.id], item => ({ ...item, starred: !item.starred }), entry.starred ? '已移除星號' : '已加上星號'); else updateEntries([entry.id], item => ({ ...item, status: button.dataset.action }), '收藏狀態已更新');
   });
   document.addEventListener('keydown', event => { if ($$('dialog[open]').length || event.ctrlKey || event.metaKey || event.altKey || /^(input|textarea|select)$/i.test(document.activeElement?.tagName || '')) return; if (event.key === '/') { event.preventDefault(); $('#search-input').focus(); } if (event.key.toLowerCase() === 'n') { event.preventDefault(); openEditor(); } });
-  window.addEventListener('online', () => { if (cloudConnected()) { scheduleAutoBackup(1200); scheduleAutoSync(1700); toast('網路已恢復，將補傳待備份與同步變更'); } });
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && cloudConnected()) { scheduleAutoBackup(1500); scheduleAutoSync(2100); } });
+  window.addEventListener('online', () => { if (state.backendSession) importCaptureJobs(); if (cloudConnected()) { scheduleAutoBackup(1200); scheduleAutoSync(1700); toast('網路已恢復，將補傳待備份與同步變更'); } });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && state.backendSession) importCaptureJobs(); if (document.visibilityState === 'visible' && cloudConnected()) { scheduleAutoBackup(1500); scheduleAutoSync(2100); } });
 }
 
 function handleLegacyShareQuery() {
