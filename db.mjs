@@ -107,6 +107,26 @@ export class PocketRepository {
     return values;
   }
 
+  async replaceBundle(entries, attachmentBlobs = new Map()) {
+    const values = entries.map(validatedEntry);
+    const tx = this.db.transaction(['entries', 'attachments'], 'readwrite');
+    try {
+      const entryStore = tx.objectStore('entries');
+      const attachmentStore = tx.objectStore('attachments');
+      entryStore.clear();
+      for (const entry of values) {
+        entryStore.put(entry);
+        const blob = entry.attachment && attachmentBlobs.get(entry.attachment.id);
+        if (blob) attachmentStore.put({ id: entry.attachment.id, blob });
+      }
+      await transactionDone(tx);
+    } catch (error) {
+      try { tx.abort(); } catch { /* already aborted or completed */ }
+      throw storageError(error);
+    }
+    return values;
+  }
+
   async deleteEntry(entry) {
     const tx = this.db.transaction(['entries', 'attachments'], 'readwrite');
     tx.objectStore('entries').delete(entry.id);

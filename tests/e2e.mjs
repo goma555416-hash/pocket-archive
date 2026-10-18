@@ -127,6 +127,31 @@ try {
   assert.equal(cloudSettings.clientId, '123456-e2e.apps.googleusercontent.com'); assert.equal(cloudSettings.retention, 7); assert.equal(cloudSettings.encryption, true);
   process.stdout.write('E2E：Drive 未授權狀態、設定與加密 UI 通過\n');
 
+  const atomicRollback = await cdp.evaluate(`(async () => {
+    const { PocketRepository } = await import('./db.mjs');
+    const { createEntry, validatedEntry } = await import('./lib.mjs');
+    const request = indexedDB.open('pocket-archive-atomic-e2e', 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore('entries', { keyPath: 'id' });
+      request.result.createObjectStore('attachments', { keyPath: 'id' });
+    };
+    const database = await new Promise((resolve, reject) => { request.onsuccess=()=>resolve(request.result); request.onerror=()=>reject(request.error); });
+    const repository = new PocketRepository(database);
+    const original = createEntry({ url: 'https://example.com/atomic-original', title: '原子交易原始資料' });
+    await repository.replaceBundle([original]);
+    const remote = validatedEntry({
+      id: 'remote-image-e2e', kind: 'image', title: '遠端圖片', type: '圖片',
+      attachment: { id: 'att-noncloneable', name: 'remote.png', size: 8, mimeType: 'image/png', hash: 'a'.repeat(64) }
+    });
+    let failed = false;
+    try { await repository.replaceBundle([remote], new Map([['att-noncloneable', () => 'cannot clone']])); } catch { failed = true; }
+    const remaining = await repository.listEntries(); database.close(); indexedDB.deleteDatabase('pocket-archive-atomic-e2e');
+    return { failed, ids: remaining.map(entry => entry.id) };
+  })()`);
+  assert.equal(atomicRollback.failed, true, '附件寫入失敗必須拒絕 transaction');
+  assert.equal(atomicRollback.ids.length, 1); assert.equal(atomicRollback.ids[0].startsWith('pa-'), true, 'transaction abort 後保留原始收藏');
+  process.stdout.write('E2E：IndexedDB 收藏與附件原子回滾通過\n');
+
   assert.deepEqual(await cdp.evaluate(`(() => [...document.querySelectorAll('button')].filter(button => !(button.textContent.trim() || button.getAttribute('aria-label') || button.title)).map(button => button.id || button.outerHTML))()`), [], '所有按鈕有可存取名稱');
   assert.deepEqual(await cdp.evaluate(`(() => [...document.querySelectorAll('input:not([type="hidden"]),select,textarea')].filter(control => !control.closest('label') && !control.getAttribute('aria-label') && !control.getAttribute('aria-labelledby')).map(control => control.id))()`), [], '所有表單控制項有標籤');
   await cdp.evaluate("document.querySelectorAll('dialog[open]').forEach(dialog=>dialog.close()); document.dispatchEvent(new KeyboardEvent('keydown',{key:'/'}))");

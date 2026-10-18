@@ -514,9 +514,8 @@ async function syncNow(automatic = false) {
       state.entries = await state.repository.replaceEntries(bootstrap.entries); state.syncJournal = bootstrap.journal; state.tombstones = bootstrap.tombstones;
     }
     const result = await state.syncService.sync({ entries: state.entries, repository: state.repository, deviceId: state.deviceId, journal: state.syncJournal, tombstones: state.tombstones });
-    await state.repository.replaceEntries(result.entries);
-    if (result.attachmentBlobs.size) await state.repository.importBundle(result.entries, result.attachmentBlobs);
-    state.entries = result.entries; state.tombstones = result.tombstones;
+    state.entries = await state.repository.replaceBundle(result.entries, result.attachmentBlobs);
+    state.tombstones = result.tombstones;
     const conflictMap = new Map([...state.cloudConflicts, ...result.conflicts].map(conflict => [`${conflict.itemId}:${JSON.stringify(conflict.local.clock)}:${JSON.stringify(conflict.remote.clock)}`, conflict]));
     state.cloudConflicts = [...conflictMap.values()].slice(-100);
     state.cloudSettings.lastSyncAt = new Date().toISOString();

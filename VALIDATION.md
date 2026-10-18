@@ -13,9 +13,9 @@ npm run test:e2e
 結果：
 
 - Codex 匿名範例 schema：2 筆通過。
-- Node：4 個測試檔、34 個 `test()` case 通過。除原有 URL、圖片、IndexedDB migration、ZIP、AI schema、安全與 PWA 測試外，新增 OAuth token 失效/撤銷、Drive 401 與 503 retry、大檔 resumable upload、AES-GCM 往返/錯密碼/竄改、向量時鐘、刪除衝突、journal schema、備份回讀完整性/輪替、AI 占位檔，以及模擬 iPhone/Windows 雙向 journal + 圖片同步。
+- Node：5 個測試檔、37 個 `test()` case 通過。除原有 URL、圖片、IndexedDB migration、ZIP、AI schema、安全與 PWA 測試外，新增 OAuth token 失效/撤銷、Drive 401 與 503 retry、大檔 resumable upload、AES-GCM 往返/錯密碼/竄改、向量時鐘、刪除衝突、journal schema、備份回讀完整性/輪替、AI 占位檔、模擬 iPhone/Windows 雙向 journal + 圖片同步，以及收藏/附件同一 IndexedDB transaction 的成功、一般附件失敗與容量不足回滾。
 - 語法：`app.js`、`lib.mjs`、`db.mjs`、`archive.mjs`、`drive.mjs`、`crypto.mjs`、`sync.mjs`、`cloud.mjs`、`sw.js` 全部 `node --check` 通過。
-- Chromium E2E：實際通過 v1 migration、單筆/批次/圖片、搜尋、備份匯入、Codex export/預覽/套用/復原、Drive 未授權不得顯示成功、雲端設定與加密 UI、表單標籤/按鈕名稱、鍵盤操作、390×844 無水平溢出，以及 Service Worker 離線重新載入。E2E 需要允許本機 loopback socket；預設受限 sandbox 會在 HTTP server bind 時失敗，取得該測試所需網路權限後通過。
+- Chromium E2E：實際通過 v1 migration、單筆/批次/圖片、搜尋、備份匯入、Codex export/預覽/套用/復原、Drive 未授權不得顯示成功、雲端設定與加密 UI、真實 IndexedDB 附件 DataCloneError 時整筆 transaction 回滾、表單標籤/按鈕名稱、鍵盤操作、390×844 無水平溢出，以及 Service Worker 離線重新載入。E2E 需要允許本機 loopback socket；預設受限 sandbox 會在 HTTP server bind 時失敗，取得該測試所需網路權限後通過。
 
 測試資料只使用 `example.com/.org/.net` 與 8-byte 匿名 PNG signature，沒有讀取或上傳真實收藏。
 
