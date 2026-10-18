@@ -15,6 +15,7 @@ Pocket Archive 是給 iPhone／iOS Safari、主畫面 Web App 與 Windows 瀏覽
 - 選用 Google Drive：GIS OAuth + 最小 `drive.file`、短效 token 僅存記憶體；App 開啟時自動補傳、變更後延遲備份/同步、斷線重試，絕不假裝有 iOS 關閉後背景同步。
 - 雲端完整備份保留 1–30 份歷史，寫入後回讀 SHA-256；可選 PBKDF2 + AES-256-GCM 用戶端加密，還原仍先預覽。
 - 跨裝置同步使用每裝置 journal、向量時鐘、delete tombstone 與可選版本的衝突面板，不以最後寫入者整庫覆蓋。
+- v2.1.3 會合併由同一份 ZIP 建立的相同因果版本；tombstone 只在能證明並行 upsert 是被刪除的同一內容時自動收斂，真正的刪除／編輯仍交由使用者選擇，且已被較新版本取代的舊衝突不再可重新發布。
 - Drive AI-Inbox/AI-Results：App 預建結果占位檔，Codex Cloud 以同一 file ID 寫回，解決不同 OAuth Client 的 `drive.file` 存取邊界。
 - PWA 離線啟動、版本化 Service Worker、iPhone 小畫面與 Windows 鍵盤操作（`N` 新增、`/` 搜尋）。
 
@@ -55,6 +56,7 @@ python -m http.server 5173
 - Access Token 不持久化。重新開啟 App 後需再次點擊連結；本機資料不受影響。
 - 連結後資料變更會延遲備份與同步；回到前景或網路恢復會補傳。App 關閉期間不宣稱能在 iOS 背景運作。
 - 同時修改不會靜默覆蓋；「Drive 同步」的衝突區可選擇保留版本。
+- iPhone 的通知會避開底部導覽與安全區；Dialog 開啟時通知仍在 top layer 顯示，且不會取得焦點或阻擋點擊。
 - 加密密碼不保存也無法復原；需要 Codex/跨裝置讀取的 Sync 與 AI 交換資料不使用備份加密。
 
 完整技術與威脅邊界見 [DRIVE-ARCHITECTURE.md](./DRIVE-ARCHITECTURE.md)。

@@ -8,7 +8,7 @@ import { initRepository } from './db.mjs';
 import { createZip, readZip, decodeText } from './archive.mjs';
 import { GoogleAuthSession, DriveApi, isValidGoogleClientId, loadGoogleIdentity } from './drive.mjs';
 import { CloudBackupService, CloudAiExchange, CloudSyncService } from './cloud.mjs';
-import { recordLocalChanges, resolveConflict } from './sync.mjs';
+import { pruneResolvedConflicts, recordLocalChanges, replicaRecord, resolveConflict } from './sync.mjs';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -22,15 +22,59 @@ const state = {
   googleIdentityStatus: 'idle', googleIdentityPromise: null
 };
 const names = { inbox: ['收件匣', '尚未整理的收藏'], saved: ['已整理', '已經整理好的收藏'], archived: ['已封存', '暫時收起的收藏'], all: ['全部收藏', '這裡收著所有值得留下的事物'] };
-let toastTimer;
+let toastTimer; let toastPopoverTimer;
+
+function openedDialog() { const dialogs = $$('dialog[open]'); return dialogs[dialogs.length - 1] || null; }
+
+function popoverIsOpen(node) {
+  try { return node.matches(':popover-open'); } catch { return false; }
+}
+
+function presentToast(node) {
+  node.classList.remove('in-dialog');
+  if (typeof node.showPopover === 'function') {
+    if (node.parentElement !== document.body) document.body.append(node);
+    try {
+      // Re-open an existing popover so it is ordered above a dialog that may
+      // have entered the top layer after the previous notification.
+      if (popoverIsOpen(node)) node.hidePopover();
+      node.showPopover();
+      return;
+    } catch { /* older Safari fallback below */ }
+  }
+  const dialog = openedDialog();
+  if (dialog) {
+    const heading = dialog.querySelector('.modal-heading');
+    (heading?.parentElement || dialog).insertBefore(node, heading?.nextSibling || null);
+    node.classList.add('in-dialog');
+  } else if (node.parentElement !== document.body) document.body.append(node);
+}
+
+function hideToast(node = $('#toast')) {
+  clearTimeout(toastTimer); clearTimeout(toastPopoverTimer); toastTimer = null;
+  node.classList.remove('show'); node.setAttribute('aria-hidden', 'true');
+  if (popoverIsOpen(node)) {
+    toastPopoverTimer = setTimeout(() => {
+      if (!node.classList.contains('show') && popoverIsOpen(node)) {
+        try { node.hidePopover(); } catch { /* visibility styles remain authoritative */ }
+      }
+    }, 230);
+  }
+}
 
 function toast(message, duration = 4200) {
   const node = $('#toast');
-  node.textContent = message; node.classList.add('show');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => node.classList.remove('show'), duration);
+  clearTimeout(toastTimer); clearTimeout(toastPopoverTimer);
+  node.textContent = message; node.setAttribute('aria-hidden', 'false');
+  presentToast(node); node.classList.add('show');
+  toastTimer = setTimeout(() => hideToast(node), duration);
 }
 
-function openDialog(id) { const dialog = $(`#${id}`); if (!dialog.open) dialog.showModal(); }
+function openDialog(id) {
+  const dialog = $(`#${id}`);
+  if (!dialog.open) dialog.showModal();
+  const node = $('#toast'); if (node.classList.contains('show')) presentToast(node);
+}
 function closeDialog(id) { const dialog = $(`#${id}`); if (dialog.open) dialog.close(); }
 
 function friendlyBytes(bytes) {
@@ -108,13 +152,14 @@ function render() {
 async function persistEntries(nextEntries, message) {
   try {
     const sync = recordLocalChanges(state.entries, nextEntries, { deviceId: state.deviceId, journal: state.syncJournal, tombstones: state.tombstones });
-    state.entries = await state.repository.replaceEntries(sync.entries);
+    const retained = new Set(sync.entries.map(entry => entry.id));
+    const deleteAttachmentIds = state.entries.filter(entry => !retained.has(entry.id)).map(entry => entry.attachment?.id).filter(Boolean);
+    const savedEntries = await state.repository.replaceBundle(sync.entries, new Map(), {
+      deleteAttachmentIds,
+      meta: { 'sync-journal': sync.journal, 'sync-tombstones': sync.tombstones, 'cloud-dirty': true }
+    });
+    state.entries = savedEntries;
     state.syncJournal = sync.journal; state.tombstones = sync.tombstones;
-    await Promise.all([
-      state.repository.setMeta('sync-journal', state.syncJournal),
-      state.repository.setMeta('sync-tombstones', state.tombstones),
-      state.repository.setMeta('cloud-dirty', true)
-    ]);
     scheduleAutoBackup(); scheduleAutoSync();
     render(); if (message) toast(message); return true;
   } catch (error) { toast(error.message, 6500); return false; }
@@ -169,7 +214,7 @@ async function deleteEntry(id) {
   if (!confirm(`確定永久刪除「${entry.title}」及其本機附件？請先確認已有備份。`)) return;
   try {
     if (!await persistEntries(state.entries.filter(item => item.id !== id))) return;
-    await state.repository.deleteEntry(entry); state.selected.delete(id); render(); toast('已刪除收藏；同步時會保留刪除紀錄');
+    state.selected.delete(id); render(); toast('已刪除收藏；同步時會保留刪除紀錄');
   } catch (error) { toast(error.message); }
 }
 
@@ -567,18 +612,25 @@ async function syncNow(automatic = false) {
   try {
     if (state.entries.some(entry => !entry.sync)) {
       const bootstrap = recordLocalChanges(state.entries.filter(entry => entry.sync), state.entries, { deviceId: state.deviceId, journal: state.syncJournal, tombstones: state.tombstones });
-      state.entries = await state.repository.replaceEntries(bootstrap.entries); state.syncJournal = bootstrap.journal; state.tombstones = bootstrap.tombstones;
+      state.entries = await state.repository.replaceBundle(bootstrap.entries, new Map(), {
+        meta: { 'sync-journal': bootstrap.journal, 'sync-tombstones': bootstrap.tombstones }
+      });
+      state.syncJournal = bootstrap.journal; state.tombstones = bootstrap.tombstones;
     }
     const result = await state.syncService.sync({ entries: state.entries, repository: state.repository, deviceId: state.deviceId, journal: state.syncJournal, tombstones: state.tombstones });
-    state.entries = await state.repository.replaceBundle(result.entries, result.attachmentBlobs);
-    state.tombstones = result.tombstones;
     const conflictMap = new Map([...state.cloudConflicts, ...result.conflicts].map(conflict => [`${conflict.itemId}:${JSON.stringify(conflict.local.clock)}:${JSON.stringify(conflict.remote.clock)}`, conflict]));
-    state.cloudConflicts = [...conflictMap.values()].slice(-100);
-    state.cloudSettings.lastSyncAt = new Date().toISOString();
-    await Promise.all([
-      state.repository.setMeta('sync-journal', state.syncJournal), state.repository.setMeta('sync-tombstones', state.tombstones),
-      state.repository.setMeta('sync-conflicts', state.cloudConflicts), state.repository.setMeta('cloud-settings', state.cloudSettings)
-    ]);
+    const nextConflicts = pruneResolvedConflicts([...conflictMap.values()], result.entries, result.tombstones).slice(-100);
+    const nextSettings = { ...state.cloudSettings, lastSyncAt: new Date().toISOString() };
+    const savedEntries = await state.repository.replaceBundle(result.entries, result.attachmentBlobs, {
+      meta: {
+        'sync-journal': result.journal,
+        'sync-tombstones': result.tombstones,
+        'sync-conflicts': nextConflicts,
+        'cloud-settings': nextSettings
+      }
+    });
+    state.entries = savedEntries; state.syncJournal = result.journal; state.tombstones = result.tombstones;
+    state.cloudConflicts = nextConflicts; state.cloudSettings = nextSettings;
     render(); renderCloudStatus(); if (!automatic || result.applied || result.conflicts.length) toast(`同步完成：套用 ${result.applied} 筆，${result.conflicts.length} 筆衝突待確認`);
   } catch (error) { if (!automatic) toast(`同步失敗：${error.message}`, 9000); else $('#cloud-backup-note').textContent = `自動同步待重試：${error.message}`; }
   finally { state.cloudBusy = false; renderCloudStatus(); }
@@ -586,16 +638,29 @@ async function syncNow(automatic = false) {
 
 async function handleConflictChoice(index, choice) {
   const conflict = state.cloudConflicts[index]; if (!conflict) return;
-  const resolution = resolveConflict(conflict, choice, state.deviceId);
-  if (resolution.entry) {
-    state.entries = state.entries.filter(entry => entry.id !== conflict.itemId); state.entries.unshift(resolution.entry); delete state.tombstones[conflict.itemId];
-    await state.repository.replaceEntries(state.entries);
-  } else {
-    const current = state.entries.find(entry => entry.id === conflict.itemId); state.entries = state.entries.filter(entry => entry.id !== conflict.itemId);
-    if (current) await state.repository.deleteEntry(current); state.tombstones[conflict.itemId] = resolution.record;
+  if (!pruneResolvedConflicts([conflict], state.entries, state.tombstones).length) {
+    state.cloudConflicts.splice(index, 1);
+    await state.repository.setMeta('sync-conflicts', state.cloudConflicts);
+    renderCloudStatus(); toast('此衝突已被較新的同步版本解決'); return;
   }
-  state.syncJournal[conflict.itemId] = resolution.record; state.cloudConflicts.splice(index, 1);
-  await Promise.all([state.repository.setMeta('sync-journal', state.syncJournal), state.repository.setMeta('sync-tombstones', state.tombstones), state.repository.setMeta('sync-conflicts', state.cloudConflicts)]);
+  const current = replicaRecord(state.entries.find(entry => entry.id === conflict.itemId), state.tombstones[conflict.itemId]);
+  const resolution = resolveConflict(conflict, choice, state.deviceId, new Date().toISOString(), current);
+  let nextEntries = state.entries.filter(entry => entry.id !== conflict.itemId);
+  const nextTombstones = { ...state.tombstones };
+  if (resolution.entry) {
+    nextEntries.unshift(resolution.entry); delete nextTombstones[conflict.itemId];
+  } else {
+    nextTombstones[conflict.itemId] = resolution.record;
+  }
+  const nextJournal = { ...state.syncJournal, [conflict.itemId]: resolution.record };
+  const nextConflicts = pruneResolvedConflicts(state.cloudConflicts.filter((_, position) => position !== index), nextEntries, nextTombstones);
+  const deletedAttachment = !resolution.entry && state.entries.find(entry => entry.id === conflict.itemId)?.attachment?.id;
+  const savedEntries = await state.repository.replaceBundle(nextEntries, new Map(), {
+    deleteAttachmentIds: deletedAttachment ? [deletedAttachment] : [],
+    meta: { 'sync-journal': nextJournal, 'sync-tombstones': nextTombstones, 'sync-conflicts': nextConflicts, 'cloud-dirty': true }
+  });
+  state.entries = savedEntries; state.tombstones = nextTombstones; state.syncJournal = nextJournal; state.cloudConflicts = nextConflicts;
+  scheduleAutoBackup(); scheduleAutoSync();
   render(); renderCloudStatus(); toast('衝突選擇已保存，請再次同步傳送結果');
 }
 
@@ -640,7 +705,13 @@ function bindEvents() {
   $('#backup-button').addEventListener('click', () => { openDialog('backup-dialog'); updateStorageSummary(); }); $('#ai-button').addEventListener('click', () => openDialog('ai-dialog'));
   $('#cloud-button').addEventListener('click', () => { openDialog('cloud-dialog'); preloadGoogleIdentity(); renderCloudStatus(); if (cloudConnected()) refreshCloudBackups(); });
   $$('[data-close]').forEach(button => button.addEventListener('click', () => closeDialog(button.dataset.close)));
-  $$('dialog').forEach(dialog => dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); }));
+  $$('dialog').forEach(dialog => {
+    dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+    dialog.addEventListener('close', () => {
+      const node = $('#toast');
+      if (node.parentElement === dialog || dialog.contains(node)) document.body.append(node);
+    });
+  });
   $('#entry-form').addEventListener('submit', saveFromForm); $('#batch-form').addEventListener('submit', saveBatch); $('#image-form').addEventListener('submit', saveImages);
   $('#paste-url').addEventListener('click', async () => { try { $('#entry-url').value = (await navigator.clipboard.readText()).trim(); } catch { toast('剪貼簿無法讀取，請手動貼上'); } });
   $('#paste-inbox').addEventListener('click', readClipboardToBatch); $('#fetch-title').addEventListener('click', fetchTitle); $('#batch-preview-button').addEventListener('click', previewBatch); $('#batch-text').addEventListener('input', previewBatch);

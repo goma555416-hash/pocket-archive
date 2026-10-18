@@ -27,7 +27,7 @@
         <button class="nav-button" data-view="archived" type="button"><span>▤</span> 已封存 <b id="nav-count-archived">0</b></button>
         <button class="nav-button" data-view="all" type="button"><span>▦</span> 全部收藏 <b id="nav-count-all">0</b></button>
       </nav>
-      <div class="side-bottom"><p>收藏值得留下的，<br />其他的慢慢整理。</p><span class="version">LOCAL FIRST · V2.1</span></div>
+      <div class="side-bottom"><p>收藏值得留下的，<br />其他的慢慢整理。</p><span class="version">LOCAL FIRST · V2.1.3</span></div>
     </aside>
 
     <div class="workspace">
@@ -165,7 +165,7 @@
 
   <input type="file" id="backup-file" accept=".json,.zip,application/json,application/zip" aria-label="選擇 Pocket Archive 備份檔" hidden />
   <input type="file" id="organized-file" accept=".json,application/json" aria-label="選擇 Codex organized JSON" hidden />
-  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true" popover="manual"></div>
   <script type="module" src="./app.js"></script>
 </body>
 </html>

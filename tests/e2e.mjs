@@ -176,23 +176,30 @@ try {
     request.onupgradeneeded = () => {
       request.result.createObjectStore('entries', { keyPath: 'id' });
       request.result.createObjectStore('attachments', { keyPath: 'id' });
+      request.result.createObjectStore('meta', { keyPath: 'key' });
     };
     const database = await new Promise((resolve, reject) => { request.onsuccess=()=>resolve(request.result); request.onerror=()=>reject(request.error); });
     const repository = new PocketRepository(database);
     const original = createEntry({ url: 'https://example.com/atomic-original', title: '原子交易原始資料' });
-    await repository.replaceBundle([original]);
+    await repository.replaceBundle([original], new Map(), { meta: { 'sync-tombstones': { retained: true } } });
     const remote = validatedEntry({
       id: 'remote-image-e2e', kind: 'image', title: '遠端圖片', type: '圖片',
       attachment: { id: 'att-noncloneable', name: 'remote.png', size: 8, mimeType: 'image/png', hash: 'a'.repeat(64) }
     });
     let failed = false;
-    try { await repository.replaceBundle([remote], new Map([['att-noncloneable', () => 'cannot clone']])); } catch { failed = true; }
-    const remaining = await repository.listEntries(); database.close(); indexedDB.deleteDatabase('pocket-archive-atomic-e2e');
-    return { failed, ids: remaining.map(entry => entry.id) };
+    try {
+      await repository.replaceBundle([remote], new Map([['att-noncloneable', () => 'cannot clone']]), {
+        meta: { 'sync-tombstones': { replaced: true } }
+      });
+    } catch { failed = true; }
+    const remaining = await repository.listEntries(); const tombstones = await repository.getMeta('sync-tombstones');
+    database.close(); indexedDB.deleteDatabase('pocket-archive-atomic-e2e');
+    return { failed, ids: remaining.map(entry => entry.id), tombstones };
   })()`);
   assert.equal(atomicRollback.failed, true, '附件寫入失敗必須拒絕 transaction');
   assert.equal(atomicRollback.ids.length, 1); assert.equal(atomicRollback.ids[0].startsWith('pa-'), true, 'transaction abort 後保留原始收藏');
-  process.stdout.write('E2E：IndexedDB 收藏與附件原子回滾通過\n');
+  assert.deepEqual(atomicRollback.tombstones, { retained: true }, 'transaction abort 後 tombstone metadata 也必須回滾');
+  process.stdout.write('E2E：IndexedDB 收藏、附件與同步 metadata 原子回滾通過\n');
 
   assert.deepEqual(await cdp.evaluate(`(() => [...document.querySelectorAll('button')].filter(button => !(button.textContent.trim() || button.getAttribute('aria-label') || button.title)).map(button => button.id || button.outerHTML))()`), [], '所有按鈕有可存取名稱');
   assert.deepEqual(await cdp.evaluate(`(() => [...document.querySelectorAll('input:not([type="hidden"]),select,textarea')].filter(control => !control.closest('label') && !control.getAttribute('aria-label') && !control.getAttribute('aria-labelledby')).map(control => control.id))()`), [], '所有表單控制項有標籤');
@@ -206,13 +213,50 @@ try {
   assert.equal(await cdp.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"), true, '390px 無水平溢出');
   assert.equal(await cdp.evaluate("getComputedStyle(document.querySelector('.mobile-nav')).display === 'grid'"), true, '手機底部導覽');
 
+  await cdp.evaluate(`(() => {
+    document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
+    document.querySelector('#cloud-button').click();
+    document.querySelector('#cloud-save-settings').click();
+  })()`);
+  const firstToast = await waitFor(() => cdp.evaluate(`(() => {
+    const toast = document.querySelector('#toast');
+    let popover = false; try { popover = toast.matches(':popover-open'); } catch {}
+    return toast.classList.contains('show') && { popover, dialogOpen: document.querySelector('#cloud-dialog').open, ariaHidden: toast.getAttribute('aria-hidden') };
+  })()`), 'Modal 上方 Toast 顯示');
+  assert.equal(firstToast.dialogOpen, true);
+  assert.equal(firstToast.ariaHidden, 'false');
+  assert.equal(firstToast.popover || await cdp.evaluate("document.querySelector('#cloud-dialog').contains(document.querySelector('#toast'))"), true, 'Toast 必須進入 top layer 或目前 dialog');
+
+  await delay(3000);
+  await cdp.evaluate("document.querySelector('#cloud-save-settings').click()");
+  await waitFor(() => cdp.evaluate("document.querySelector('#toast').textContent === '雲端設定已保存；密碼只保留到本頁關閉'"), '第二次 Toast');
+  await cdp.evaluate("document.querySelector('#toast').textContent = '這是一段用來驗證 iPhone 小螢幕通知換行與安全區域的很長訊息，內容不應超出畫面，也不能遮住底部導覽列或阻擋主要操作按鈕。'");
+  await delay(1500);
+  const mobileToast = await cdp.evaluate(`(() => {
+    const toast = document.querySelector('#toast'); const nav = document.querySelector('.mobile-nav');
+    const rect = toast.getBoundingClientRect(); const navRect = nav.getBoundingClientRect(); const style = getComputedStyle(toast);
+    return { shown: toast.classList.contains('show'), width: rect.width, left: rect.left, right: rect.right, bottom: rect.bottom, navTop: navRect.top, pointerEvents: style.pointerEvents, visibility: style.visibility };
+  })()`);
+  assert.equal(mobileToast.shown, true, '第二次通知必須重設第一次的計時器');
+  assert.equal(mobileToast.visibility, 'visible'); assert.equal(mobileToast.pointerEvents, 'none');
+  assert.ok(mobileToast.left >= 15 && mobileToast.right <= 375 && mobileToast.width <= 360, '長通知必須在 390px 畫面內換行');
+  assert.ok(mobileToast.bottom < mobileToast.navTop, 'Toast 不得與底部導覽及 Home Indicator 安全區重疊');
+
+  await delay(3000);
+  const hiddenToast = await cdp.evaluate(`(() => { const toast = document.querySelector('#toast'); const style = getComputedStyle(toast); let popover = false; try { popover = toast.matches(':popover-open'); } catch {} return { shown: toast.classList.contains('show'), ariaHidden: toast.getAttribute('aria-hidden'), visibility: style.visibility, popover }; })()`);
+  assert.deepEqual(hiddenToast, { shown: false, ariaHidden: 'true', visibility: 'hidden', popover: false }, '通知時間到後必須完全隱藏');
+  await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  assert.equal(await cdp.evaluate("getComputedStyle(document.querySelector('#toast')).transitionDuration.split(',').every(value => value.trim() === '0s')"), true, 'reduced-motion 停用 Toast 動畫');
+  await cdp.send('Emulation.setEmulatedMedia', { features: [] });
+  process.stdout.write('E2E：Toast top layer、連續計時、長訊息、完整隱藏、安全區與 reduced-motion 通過\n');
+
   await waitFor(() => cdp.evaluate("Boolean(navigator.serviceWorker.controller)"), 'Service Worker 控制頁面', 16000);
   await cdp.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
   await cdp.send('Page.reload', { ignoreCache: true });
   await waitFor(() => cdp.evaluate("Boolean(document.querySelector('#page-heading'))"), '離線啟動', 12000);
   await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
 
-  process.stdout.write('E2E 通過：遷移、單筆、批次、圖片、搜尋、備份、Codex 預覽/套用/復原、OAuth popup 手勢、Drive 原生 fetch、390px、離線。\n');
+  process.stdout.write('E2E 通過：遷移、單筆、批次、圖片、搜尋、備份、Codex 預覽/套用/復原、OAuth popup 手勢、Drive 原生 fetch、Toast、390px、離線。\n');
 } finally {
   cdp?.close();
   if (browser && browser.exitCode === null) {

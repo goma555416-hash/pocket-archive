@@ -24,6 +24,14 @@ test('Service Worker 離線清單中的本機資源都存在', async () => {
   await Promise.all(resources.filter(Boolean).map(file => access(resolve(new URL('..', import.meta.url).pathname, file))));
 });
 
+test('App 版本與 Service Worker 快取版本一致', async () => {
+  const packageData = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  const worker = await readFile(new URL('../sw.js', import.meta.url), 'utf8');
+  const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  assert.match(worker, new RegExp(`pocket-archive-v${packageData.version.replaceAll('.', '\\.')}`));
+  assert.match(html, new RegExp(`V${packageData.version.replaceAll('.', '\\.')}`));
+});
+
 test('A3 icon 所有宣告尺寸檔案存在', async () => {
   await Promise.all(['icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-1024.png'].map(file => access(new URL(`../icons/${file}`, import.meta.url))));
 });

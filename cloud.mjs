@@ -114,6 +114,19 @@ export class CloudAiExchange {
 export class CloudSyncService {
   constructor(drive, workspace) { this.drive = drive; this.workspace = workspace; }
 
+  async writeJournal(deviceId, journal, existingFile = null) {
+    const envelope = createJournal(deviceId, journal);
+    const blob = new Blob([JSON.stringify(envelope)], { type: 'application/json' });
+    if (existingFile) {
+      await this.drive.updateContent(existingFile.id, blob, { mimeType: 'application/json' });
+      return existingFile;
+    }
+    return this.drive.createFile({
+      name: `journal-${deviceId}.json`, parentId: this.workspace.sync, blob, mimeType: 'application/json',
+      appProperties: { paRole: 'syncJournal', deviceId }
+    });
+  }
+
   async uploadAttachments(records, repository) {
     const known = await this.drive.listFiles({ parentId: this.workspace.syncAttachments, appRole: 'syncAttachment', pageSize: 100 });
     const byHash = new Map((known.files || []).map(file => [file.appProperties?.sha256, file]));
@@ -135,13 +148,9 @@ export class CloudSyncService {
 
   async sync({ entries, repository, deviceId, journal, tombstones }) {
     await this.uploadAttachments(journal, repository);
-    const envelope = createJournal(deviceId, journal);
     const name = `journal-${deviceId}.json`;
     const own = await this.drive.listFiles({ parentId: this.workspace.sync, name, appRole: 'syncJournal', pageSize: 10 });
-    const blob = new Blob([JSON.stringify(envelope)], { type: 'application/json' });
-    let journalFile;
-    if (own.files?.[0]) { await this.drive.updateContent(own.files[0].id, blob, { mimeType: 'application/json' }); journalFile = own.files[0]; }
-    else journalFile = await this.drive.createFile({ name, parentId: this.workspace.sync, blob, mimeType: 'application/json', appProperties: { paRole: 'syncJournal', deviceId } });
+    const journalFile = await this.writeJournal(deviceId, journal, own.files?.[0]);
 
     const listing = await this.drive.listFiles({ parentId: this.workspace.sync, appRole: 'syncJournal', pageSize: 100 });
     const remoteRecords = [];
@@ -149,7 +158,13 @@ export class CloudSyncService {
       const content = await this.drive.downloadFile(file.id);
       const parsed = readJournal(await content.text()); remoteRecords.push(...parsed.records);
     }
-    const result = reconcileReplica(entries, tombstones, remoteRecords);
+    const result = reconcileReplica(entries, tombstones, remoteRecords, journal);
+    const nextJournal = { ...journal, ...result.convergedRecords };
+    if (Object.keys(result.convergedRecords).length) {
+      // Publish causal joins immediately. This is what lets two identical ZIP
+      // replicas become one shared history before either side edits or deletes.
+      await this.writeJournal(deviceId, nextJournal, journalFile);
+    }
     const remoteByItem = new Map(remoteRecords.filter(record => record.operation === 'upsert' && record.attachmentFileId).map(record => [record.itemId, record]));
     const attachmentBlobs = new Map();
     for (const entry of result.entries.filter(item => item.attachment)) {
@@ -160,6 +175,6 @@ export class CloudSyncService {
       if (blobValue.size !== entry.attachment.size || await sha256(blobValue) !== entry.attachment.hash) throw new Error(`遠端同步附件完整性驗證失敗：${entry.attachment.name}`);
       attachmentBlobs.set(entry.attachment.id, new Blob([await blobValue.arrayBuffer()], { type: entry.attachment.mimeType }));
     }
-    return { ...result, attachmentBlobs, journalFile, remoteJournalCount: listing.files?.length || 0 };
+    return { ...result, journal: nextJournal, attachmentBlobs, journalFile, remoteJournalCount: listing.files?.length || 0 };
   }
 }
