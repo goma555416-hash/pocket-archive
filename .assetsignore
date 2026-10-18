@@ -1,11 +1,41 @@
 .git
+.gitignore
 .github
-attachments
-examples
-node_modules
-scripts
-tests
-worker
+.dev.vars*
+.env*
+/private-data/
+/exports/
+/attachments/
+/examples/
+/node_modules/
+/scripts/
+/tests/
+/worker/
+/.wrangler/
+/coverage/
+/test-results/
+/playwright-report/
+
+# Private Pocket Archive backups, migration bundles, and AI exchange files
+pocket-archive-backup-*.json
+pocket-archive-backup-*.zip
+pocket-archive-inbox-*.json
+pocket-archive-inbox-*.zip
+pocket-archive-migration-*.zip
+organized*.json
+
+# Local credentials, databases, logs, and editor/OS output
+*.pem
+*.key
+*.sqlite
+*.sqlite3
+*.db
+*.log
+*.bak
+.DS_Store
+Thumbs.db
+
+# Repository-only metadata and documentation
 *.md
 package-lock.json
 package.json

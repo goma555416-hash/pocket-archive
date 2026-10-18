@@ -12,11 +12,16 @@ exports/
 attachments/
 
 # Credentials and local environment
-.env
-.env.*
+.dev.vars*
+.env*
 !.env.example
 *.pem
 *.key
+*.sqlite
+*.sqlite3
+*.db
+*.log
+*.bak
 
 # Tool and OS output
 node_modules/
@@ -24,6 +29,5 @@ node_modules/
 coverage/
 test-results/
 playwright-report/
-.wrangler/
 .DS_Store
 Thumbs.db
