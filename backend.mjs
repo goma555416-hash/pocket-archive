@@ -30,6 +30,7 @@ export class PocketBackendClient {
     if (!response.ok) {
       const result = contentType.includes('application/json') ? await response.json().catch(() => ({})) : {};
       if (allowUnauthenticated && response.status === 401) return { authenticated: false };
+      if (result?.error?.code === 'reauth_required' && this.session) this.session.reauthRequired = true;
       throw new BackendApiError(result?.error?.message || `後端要求失敗（${response.status}）`, response.status, result?.error?.code);
     }
     return raw ? response : response.json();

@@ -8,8 +8,9 @@ import { initRepository } from './db.mjs';
 import { createZip, readZip, decodeText } from './archive.mjs';
 import { GoogleAuthSession, DriveApi, isValidGoogleClientId, loadGoogleIdentity } from './drive.mjs';
 import { BackendDriveApi, PocketBackendClient, authResultFromLocation } from './backend.mjs';
+import { createMigrationManifest, readMigrationManifest, mergeMigrationAi } from './migration.mjs';
 import { CloudBackupService, CloudAiExchange, CloudSyncService } from './cloud.mjs';
-import { pruneResolvedConflicts, recordLocalChanges, replicaRecord, resolveConflict } from './sync.mjs';
+import { pruneResolvedConflicts, recordLocalChanges, reconcileReplica, replicaRecord, resolveConflict } from './sync.mjs';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -299,6 +300,34 @@ async function exportBackup() {
   } catch (error) { toast(`備份失敗：${error.message}`, 7000); }
 }
 
+async function exportMigrationPackage() {
+  try {
+    let migrationEntries = state.entries; let migrationJournal = state.syncJournal;
+    if (migrationEntries.some(entry => !entry.sync)) {
+      const bootstrap = recordLocalChanges(migrationEntries.filter(entry => entry.sync), migrationEntries, { deviceId: state.deviceId, journal: state.syncJournal, tombstones: state.tombstones });
+      migrationEntries = bootstrap.entries; migrationJournal = bootstrap.journal;
+    }
+    const envelope = createBackupEnvelope(migrationEntries); const backupJson = JSON.stringify(envelope, null, 2);
+    const [exportIds, cloudJobs, driveWorkspace] = await Promise.all([
+      state.repository.getMeta('ai-export-ids', []), state.repository.getMeta('cloud-ai-jobs', []), state.repository.getMeta('drive-workspace', {})
+    ]);
+    const migration = createMigrationManifest({
+      backupSha256: await sha256(new TextEncoder().encode(backupJson)), sourceOrigin: location.origin, sourceDeviceId: state.deviceId,
+      syncJournal: migrationJournal, tombstones: state.tombstones, exportIds, cloudJobs, driveWorkspace
+    });
+    const files = [{ name: 'backup.json', data: backupJson }, { name: 'migration.json', data: JSON.stringify(migration, null, 2) }];
+    for (const entry of migrationEntries.filter(item => item.attachment)) {
+      const blob = await state.repository.getAttachment(entry.attachment.id);
+      if (!blob) throw new Error(`附件遺失：${entry.attachment.name}。遷移已停止，原站資料未變更。`);
+      if (await sha256(blob) !== entry.attachment.hash) throw new Error(`附件 SHA-256 不符：${entry.attachment.name}。遷移已停止。`);
+      files.push({ name: entry.attachment.path, data: blob });
+    }
+    const date = new Date().toISOString().slice(0, 10); download(await createZip(files), `pocket-archive-migration-${date}.zip`);
+    $('#migration-status').textContent = `已建立 ${state.entries.length} 筆、${files.length - 2} 個附件的遷移 ZIP。舊站資料未刪除。`;
+    toast('遷移 ZIP 已下載；請保留舊站並在新網址先做匯入預覽 ✓');
+  } catch (error) { $('#migration-status').textContent = `遷移匯出失敗：${error.message}`; toast(`遷移匯出失敗：${error.message}`, 8000); }
+}
+
 async function inspectBackup(file) {
   if (file.size > 300 * 1024 * 1024) throw new Error('備份檔不可超過 300 MB');
   let parsed; const blobs = new Map();
@@ -307,6 +336,12 @@ async function inspectBackup(file) {
     if (!manifest) throw new Error('ZIP 根目錄缺少 backup.json');
     parsed = readBackup(decodeText(manifest));
     const expected = new Set(['backup.json']);
+    let migration = null; const migrationBytes = files.get('migration.json');
+    if (migrationBytes) {
+      if (migrationBytes.length > 5 * 1024 * 1024) throw new Error('migration.json 超過 5 MB');
+      migration = readMigrationManifest(decodeText(migrationBytes)); expected.add('migration.json');
+      if (await sha256(manifest) !== migration.backupSha256) throw new Error('遷移 manifest 與 backup.json 的 SHA-256 不符');
+    }
     for (const entry of parsed.entries) {
       if (!entry.attachment) continue;
       const path = `attachments/${entry.attachment.id}`; expected.add(path);
@@ -317,28 +352,57 @@ async function inspectBackup(file) {
       blobs.set(entry.attachment.id, new Blob([bytes], { type: entry.attachment.mimeType }));
     }
     for (const path of files.keys()) if (!expected.has(path)) throw new Error(`ZIP 包含未列於清單的檔案：${path}`);
+    const preview = previewMerge(state.entries, parsed.entries);
+    return { parsed, blobs, preview, migration };
   } else {
     parsed = readBackup(await file.text());
     if (parsed.entries.some(entry => entry.attachment)) throw new Error('此 JSON 有附件清單但沒有圖片；請選擇完整 ZIP 備份');
   }
   const preview = previewMerge(state.entries, parsed.entries);
-  return { parsed, blobs, preview };
+  return { parsed, blobs, preview, migration: null };
 }
 
 async function importBackupFile(event) {
   const file = event.target.files?.[0]; event.target.value = ''; if (!file) return;
   try {
     state.pendingImport = await inspectBackup(file); const { add, skip, conflicts } = state.pendingImport.preview;
-    $('#confirm-content').innerHTML = `<p class="preview-summary"><strong>${add.length} 筆將合併</strong> · ${skip.length} 筆重複略過 · ${conflicts.length} 筆 ID 衝突略過</p><p>此操作不會覆寫或刪除現有收藏。</p>${conflicts.length ? `<ul class="preview-list">${conflicts.slice(0, 20).map(item => `<li data-status="invalid"><b>衝突</b><span>${escapeHtml(item.entry.title)}</span></li>`).join('')}</ul>` : ''}`;
-    $('#confirm-import').disabled = add.length === 0; openDialog('confirm-dialog');
+    const migrationNote = state.pendingImport.migration ? `<p><strong>已驗證跨來源遷移：</strong>${escapeHtml(state.pendingImport.migration.sourceOrigin)} · ${Object.keys(state.pendingImport.migration.tombstones).length} 筆 tombstone。將保留新網址的 device ID；同 ID 差異會依因果時鐘套用或進入衝突面板，不會盲目覆寫。</p>` : '<p>此操作不會覆寫或刪除現有收藏。</p>';
+    $('#confirm-content').innerHTML = `<p class="preview-summary"><strong>${add.length} 筆將合併</strong> · ${skip.length} 筆重複略過 · ${conflicts.length} 筆 ID 衝突略過</p>${migrationNote}${conflicts.length ? `<ul class="preview-list">${conflicts.slice(0, 20).map(item => `<li data-status="invalid"><b>衝突</b><span>${escapeHtml(item.entry.title)}</span></li>`).join('')}</ul>` : ''}`;
+    $('#confirm-import').disabled = add.length === 0 && !state.pendingImport.migration; openDialog('confirm-dialog');
   } catch (error) { toast(`匯入失敗：${error.message}`, 7500); }
 }
 
 async function confirmImport() {
   if (!state.pendingImport) return;
   const entries = state.pendingImport.preview.add; const needed = new Map();
-  entries.filter(entry => entry.attachment).forEach(entry => needed.set(entry.attachment.id, state.pendingImport.blobs.get(entry.attachment.id)));
+  const attachmentEntries = state.pendingImport.migration ? state.pendingImport.parsed.entries : entries;
+  attachmentEntries.filter(entry => entry.attachment && state.pendingImport.blobs.has(entry.attachment.id)).forEach(entry => needed.set(entry.attachment.id, state.pendingImport.blobs.get(entry.attachment.id)));
   try {
+    if (state.pendingImport.migration) {
+      const migration = state.pendingImport.migration; const combined = [...entries, ...state.entries];
+      const local = recordLocalChanges(state.entries, combined, { deviceId: state.deviceId, journal: state.syncJournal, tombstones: state.tombstones });
+      const allowedRemoteIds = new Set([
+        ...entries.map(entry => entry.id),
+        ...state.pendingImport.preview.conflicts.map(item => item.entry.id),
+        ...state.pendingImport.preview.skip.filter(item => item.reason === 'same-id').map(item => item.entry.id)
+      ]);
+      const remoteEntries = state.pendingImport.parsed.entries.filter(entry => allowedRemoteIds.has(entry.id)).map(entry => replicaRecord(entry, null)).filter(Boolean);
+      const reconciled = reconcileReplica(local.entries, local.tombstones, [...remoteEntries, ...Object.values(migration.tombstones)], local.journal);
+      const nextJournal = {};
+      for (const entry of reconciled.entries) { const record = replicaRecord(entry, null); if (record) nextJournal[entry.id] = record; }
+      for (const [id, tombstone] of Object.entries(reconciled.tombstones)) { const record = replicaRecord(null, tombstone); if (record) nextJournal[id] = record; }
+      const nextConflicts = pruneResolvedConflicts([...state.cloudConflicts, ...reconciled.conflicts], reconciled.entries, reconciled.tombstones).slice(-100);
+      const currentIds = await state.repository.getMeta('ai-export-ids', []); const ai = mergeMigrationAi(currentIds, state.cloudJobs, migration);
+      const history = await state.repository.getMeta('migration-history', []); const nextHistory = [{ sourceOrigin: migration.sourceOrigin, sourceDeviceId: migration.sourceDeviceId, importedAt: new Date().toISOString(), entryCount: entries.length, tombstoneCount: Object.keys(migration.tombstones).length }, ...history].slice(0, 20);
+      const retained = new Set(reconciled.entries.map(entry => entry.id)); const deleteAttachmentIds = state.entries.filter(entry => !retained.has(entry.id)).map(entry => entry.attachment?.id).filter(Boolean);
+      const meta = { 'sync-journal': nextJournal, 'sync-tombstones': reconciled.tombstones, 'sync-conflicts': nextConflicts, 'ai-export-ids': ai.exportIds, 'cloud-ai-jobs': ai.cloudJobs, 'migration-history': nextHistory, 'cloud-dirty': true };
+      if (Object.keys(migration.driveWorkspace).length) meta['drive-workspace'] = migration.driveWorkspace;
+      state.entries = await state.repository.replaceBundle(reconciled.entries, needed, { deleteAttachmentIds, meta });
+      state.syncJournal = nextJournal; state.tombstones = reconciled.tombstones; state.cloudConflicts = nextConflicts; state.cloudJobs = ai.cloudJobs;
+      const imported = entries.length; state.pendingImport = null; render(); renderCloudStatus(); closeDialog('confirm-dialog'); scheduleAutoBackup(); scheduleAutoSync();
+      toast(`跨來源遷移完成：新增 ${imported} 筆、保留 ${Object.keys(reconciled.tombstones).length} 筆刪除紀錄${nextConflicts.length ? `，${nextConflicts.length} 筆衝突待確認` : ''} ✓`, 8500);
+      return;
+    }
     await state.repository.importBundle(entries, needed); await persistEntries([...entries, ...state.entries]); state.pendingImport = null; render(); closeDialog('confirm-dialog'); toast(`已安全合併 ${entries.length} 筆收藏 ✓`);
   } catch (error) { toast(error.message, 7500); }
 }
@@ -428,7 +492,7 @@ async function readClipboardToBatch() {
   catch { openDialog('batch-dialog'); toast('剪貼簿無法讀取，請長按輸入框貼上'); }
 }
 
-function cloudConnected() { return Boolean(state.drive && state.workspace && (state.backendSession || state.auth?.status().connected)); }
+function cloudConnected() { return Boolean(state.drive && state.workspace && ((state.backendSession && !state.backendSession.reauthRequired) || state.auth?.status().connected)); }
 
 function renderCloudStatus() {
   const connected = cloudConnected();
@@ -626,7 +690,8 @@ async function importCaptureJobs() {
 async function restoreBackendSession() {
   state.backend = new PocketBackendClient();
   const detected = await state.backend.detectSession(); state.backendAvailable = detected.available; state.backendSession = detected.session;
-  if (!detected.available) { if (isValidGoogleClientId(state.cloudSettings.clientId)) preloadGoogleIdentity(); return; }
+  if (!detected.available) { $('#migration-banner').hidden = false; if (isValidGoogleClientId(state.cloudSettings.clientId)) preloadGoogleIdentity(); return; }
+  $('#migration-banner').hidden = true;
   if (!detected.session) { renderCloudStatus(); return; }
   state.cloudUser = { emailAddress: detected.session.user?.email, displayName: detected.session.user?.displayName };
   state.drive = new BackendDriveApi(state.backend);
@@ -635,6 +700,7 @@ async function restoreBackendSession() {
     await state.repository.setMeta('drive-workspace', state.workspace); scheduleAutoBackup(900); scheduleAutoSync(1500);
   } catch (error) { state.drive = null; state.workspace = null; $('#cloud-backup-note').textContent = `Drive 授權需處理：${error.message}`; }
   await Promise.all([refreshBackendSessions(), refreshCaptureCredentials()]); renderCloudStatus(); await importCaptureJobs();
+  if (cloudConnected() && state.cloudJobs.some(job => job.status !== 'applied')) setTimeout(() => checkCloudAi(), 2600);
 }
 
 function scheduleAutoBackup(delayMs = 6000) {
@@ -806,7 +872,8 @@ function bindEvents() {
   $('#paste-inbox').addEventListener('click', readClipboardToBatch); $('#fetch-title').addEventListener('click', fetchTitle); $('#batch-preview-button').addEventListener('click', previewBatch); $('#batch-text').addEventListener('input', previewBatch);
   $('#image-files').addEventListener('change', event => prepareImages(event.target.files));
   const drop = $('#drop-zone'); ['dragenter', 'dragover'].forEach(name => drop.addEventListener(name, event => { event.preventDefault(); drop.classList.add('is-dragging'); })); ['dragleave', 'drop'].forEach(name => drop.addEventListener(name, event => { event.preventDefault(); drop.classList.remove('is-dragging'); })); drop.addEventListener('drop', event => prepareImages(event.dataTransfer.files));
-  $('#export-backup').addEventListener('click', exportBackup); $('#import-backup').addEventListener('click', () => $('#backup-file').click()); $('#backup-file').addEventListener('change', importBackupFile); $('#confirm-import').addEventListener('click', confirmImport);
+  $('#export-backup').addEventListener('click', exportBackup); $('#export-migration').addEventListener('click', exportMigrationPackage); $('#import-backup').addEventListener('click', () => $('#backup-file').click()); $('#backup-file').addEventListener('change', importBackupFile); $('#confirm-import').addEventListener('click', confirmImport);
+  $('#migration-banner-backup').addEventListener('click', () => openDialog('backup-dialog'));
   $('#export-ai').addEventListener('click', exportForCodex); $('#import-ai').addEventListener('click', () => $('#organized-file').click()); $('#organized-file').addEventListener('change', importOrganized); $('#apply-ai').addEventListener('click', applyOrganized); $('#undo-ai').addEventListener('click', undoAi);
   $('#cloud-connect').addEventListener('click', connectDrive); $('#cloud-disconnect').addEventListener('click', disconnectDrive);
   $('#cloud-revoke-grant').addEventListener('click', revokeCloudGrant); $('#refresh-device-sessions').addEventListener('click', refreshBackendSessions);

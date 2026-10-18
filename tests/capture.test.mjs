@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { fetchHandler } from '../worker/src/index.mjs';
 import { bytesToBase64Url, sha256Text } from '../worker/src/security.mjs';
+
+let DatabaseSync;
+try { ({ DatabaseSync } = await import('node:sqlite')); } catch { /* Node 20: D1 integration test is skipped */ }
 
 class Statement {
   constructor(database, sql) { this.database = database; this.sql = sql; this.values = []; }
@@ -17,7 +19,7 @@ class D1 {
   prepare(sql) { return new Statement(this.database, sql); }
 }
 
-test('shortcut credential is least-privilege, rate-limited and queue leasing is idempotent', async () => {
+test('shortcut credential is least-privilege, rate-limited and queue leasing is idempotent', { skip: !DatabaseSync && 'node:sqlite 需要 Node 22.5+' }, async () => {
   const schema = `${await readFile(new URL('../worker/migrations/0001_auth.sql', import.meta.url), 'utf8')}\n${await readFile(new URL('../worker/migrations/0002_capture.sql', import.meta.url), 'utf8')}`;
   const clock = Date.parse('2026-10-18T00:00:00Z'); const database = new D1(schema);
   const sessionRaw = 'session-secret'; const csrf = 'csrf-secret'; const secondRaw = 'second-session';

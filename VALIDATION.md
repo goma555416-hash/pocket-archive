@@ -1,4 +1,31 @@
-# Pocket Archive v2.1.3 — 驗證紀錄（2026-10-18）
+# Pocket Archive v2.2 — 驗證紀錄（2026-10-18）
+
+## v2.2 自動化結果
+
+實際執行：
+
+```bash
+npm test
+npm run test:e2e
+XDG_CONFIG_HOME=/tmp/pocket-archive-config npx wrangler d1 migrations apply pocket-archive --local
+XDG_CONFIG_HOME=/tmp/pocket-archive-config npx wrangler deploy --dry-run
+```
+
+- Node：10 個測試檔、53 個 `test()` case 通過。新增 OAuth code/PKCE/OIDC、加密 Token、Session rotation/CSRF/replay/revoke、後端 Drive adapter、快捷憑證／限流／冪等／雙裝置 lease、遷移 manifest／AI metadata；原有 archive、IndexedDB、URL、Drive、sync/tombstone、PWA 回歸全部通過。
+- Chromium E2E：既有 v1 migration、新增／批次／圖片、搜尋、備份、Codex、Drive fallback、OAuth popup、IndexedDB 原子回滾、390px、Toast 與離線全部通過；新增跨 origin 遷移 ZIP 的附件、`migration.json`、匯出、驗證與冪等匯入也通過。
+- Wrangler：`0001_auth.sql` 與 `0002_capture.sql` 已實際套用本機 D1；Worker + Static Assets dry-run bundle 成功。
+- 測試只使用 `example.com/.org/.net`、生成式 OAuth RSA key、記憶體 SQLite/D1 adapter 與匿名 8-byte PNG signature，不存取私人 Google Drive 或收藏。
+
+## 尚未驗證／不可虛報
+
+- 未取得 Cloudflare 帳號、D1、正式 Secrets 或 Google Client Secret，因此沒有公開部署、沒有正式 OAuth callback，也沒有操作私人 Drive。
+- 本環境沒有 WebKit／真 iPhone；Apple Share Sheet、Shortcuts 的實際動作名稱、PWA cookie 持久性與 standalone UI 仍需實機驗收。
+- 沒有宣稱 Google External/Production、品牌驗證或 `drive.file` 既有資料夾相容性已在帳號端完成；必須沿用 project/client 後以匿名資料驗證。
+- Google、Cloudflare、Apple 官方網站在本環境回 403；Cloudflare 限制以其官方 GitHub docs 來源核對，Google/Apple 保留官方 URL 與帳號端複核項目。
+
+---
+
+# Pocket Archive v2.1.3 — 歷史驗證紀錄（2026-10-18）
 
 ## 自動化驗證
 

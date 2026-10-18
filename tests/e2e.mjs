@@ -114,6 +114,22 @@ try {
   await waitFor(() => cdp.evaluate("[...document.querySelectorAll('.card-title')].some(n=>n.textContent.includes('還原收藏'))"), '備份合併');
   process.stdout.write('E2E：搜尋與備份匯入通過\n');
 
+  await cdp.evaluate(`(() => {
+    window.__migrationBlob = null; window.__originalObjectUrl = URL.createObjectURL;
+    URL.createObjectURL = blob => { window.__migrationBlob = blob; return window.__originalObjectUrl(blob); };
+    document.querySelector('#backup-button').click(); document.querySelector('#export-migration').click();
+  })()`);
+  await waitFor(() => cdp.evaluate("document.querySelector('#migration-status').textContent.includes('已建立')"), '遷移 ZIP 建立');
+  const migrationFiles = await cdp.evaluate(`(async () => { const { readZip } = await import('./archive.mjs'); const files = await readZip(window.__migrationBlob); return [...files.keys()]; })()`);
+  assert.ok(migrationFiles.includes('backup.json')); assert.ok(migrationFiles.includes('migration.json')); assert.ok(migrationFiles.some(name => name.startsWith('attachments/')));
+  await cdp.evaluate(`(() => { URL.createObjectURL = window.__originalObjectUrl; const file=new File([window.__migrationBlob],'migration.zip',{type:'application/zip'}); const transfer=new DataTransfer(); transfer.items.add(file); const input=document.querySelector('#backup-file'); input.files=transfer.files; input.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+  await waitFor(() => cdp.evaluate("document.querySelector('#confirm-content').textContent.includes('已驗證跨來源遷移')"), '遷移 ZIP 預覽');
+  const beforeMigrationCount = await cdp.evaluate("document.querySelectorAll('.item-card').length");
+  await cdp.evaluate("document.querySelector('#confirm-import').click()");
+  await waitFor(() => cdp.evaluate("!document.querySelector('#confirm-dialog').open"), '遷移 ZIP 原子套用');
+  assert.equal(await cdp.evaluate("document.querySelectorAll('.item-card').length"), beforeMigrationCount, '同一份遷移 ZIP 不重複建立收藏');
+  process.stdout.write('E2E：跨 origin 遷移 ZIP 匯出、驗證與冪等匯入通過\n');
+
   await cdp.evaluate("document.querySelector('#ai-button').click(); document.querySelector('#export-ai').click()");
   const exportId = await waitFor(() => cdp.evaluate(`new Promise(resolve => { const request=indexedDB.open('pocket-archive'); request.onsuccess=()=>{ const tx=request.result.transaction('meta','readonly'); const get=tx.objectStore('meta').get('ai-export-ids'); get.onsuccess=()=>resolve(get.result?.value?.[0]||''); }; })`), 'Codex export_id');
   const organized = JSON.stringify({ format: 'pocket-archive-organized', schema_version: 2, source_export_id: exportId, items: [{ id: 'imported-e2e', analysis_status: 'completed', suggested_categories: ['閱讀'], suggested_tags: ['已分析'], summary: '依可見測試內容產生的摘要', reason: 'visible test title', confidence: 'high' }] });

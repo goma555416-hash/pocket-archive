@@ -3,6 +3,7 @@ pocket-archive-backup-*.json
 pocket-archive-backup-*.zip
 pocket-archive-inbox-*.json
 pocket-archive-inbox-*.zip
+pocket-archive-migration-*.zip
 organized*.json
 !examples/organized-example.json
 !examples/inbox-example.json
@@ -19,6 +20,7 @@ attachments/
 
 # Tool and OS output
 node_modules/
+.wrangler/
 coverage/
 test-results/
 playwright-report/

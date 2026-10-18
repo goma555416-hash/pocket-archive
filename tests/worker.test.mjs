@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { fetchHandler } from '../worker/src/index.mjs';
 import { bytesToBase64Url, pkceChallenge, randomToken } from '../worker/src/security.mjs';
 import { resetGoogleKeyCache } from '../worker/src/google.mjs';
+
+let DatabaseSync;
+try { ({ DatabaseSync } = await import('node:sqlite')); } catch { /* Node 20: D1 integration test is skipped */ }
 
 class D1Statement {
   constructor(database, sql) { this.database = database; this.sql = sql; this.values = []; }
@@ -31,7 +33,7 @@ async function signedIdToken(privateKey, claims) {
   return `${header}.${body}.${bytesToBase64Url(new Uint8Array(signature))}`;
 }
 
-test('Worker OAuth code flow restores, rotates and revokes a secure session', async () => {
+test('Worker OAuth code flow restores, rotates and revokes a secure session', { skip: !DatabaseSync && 'node:sqlite 需要 Node 22.5+' }, async () => {
   resetGoogleKeyCache();
   const schema = await readFile(new URL('../worker/migrations/0001_auth.sql', import.meta.url), 'utf8');
   const keys = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
