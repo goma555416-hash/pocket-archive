@@ -1,6 +1,6 @@
 # Pocket Archive：Codex 批次整理指令
 
-請整理我明確提供的 Pocket Archive 匯出檔，不要存取其他私人資料，也不要把結果提交到 GitHub。
+請整理我明確提供的 Pocket Archive 匯出檔，先讀 AGENTS.md、AI-BATCH-SPEC.md、CODEX-DRIVE-WORKFLOW.md；禁止搜尋 Notion 或其他私人工作區，不要存取其他私人資料，也不要把結果提交到 GitHub。
 
 輸入是 `pocket-archive-inbox` schema v2：純連結批次為 JSON；含圖片時為 ZIP，清單在根目錄 `inbox.json`，圖片路徑由各 item 的 `attachment.path` 指定。請逐項遵守：
 
@@ -50,3 +50,5 @@ node scripts/validate-organized.mjs organized.json pocket-archive-inbox-YYYY-MM-
 ```
 
 若輸入是 ZIP，驗證器也接受 ZIP 作為第二個參數。只有驗證通過才把 `organized.json` 交回使用者；不要修改原始匯出檔。
+
+Drive 批次必須使用 App 產生的 export_id 專用指令。開始前驗證 raw download／原 file ID 更新與回讀能力，任何缺少皆 fail closed。只更新既有 organized-<export_id>.json，不另建檔；回讀結果驗證後才報完成，App 仍先預覽與人工套用。

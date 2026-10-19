@@ -27,7 +27,7 @@ function responseCookie(response, name) {
 
 test('shortcut credential is least-privilege, rate-limited and queue leasing is idempotent', { skip: !DatabaseSync && 'node:sqlite 需要 Node 22.5+' }, async () => {
   const schema = `${await readFile(new URL('../worker/migrations/0001_auth.sql', import.meta.url), 'utf8')}\n${await readFile(new URL('../worker/migrations/0002_capture.sql', import.meta.url), 'utf8')}\n${await readFile(new URL('../worker/migrations/0003_owner_session_security.sql', import.meta.url), 'utf8')}`;
-  let clock = Date.parse('2026-10-18T00:00:00Z'); const database = new D1(schema);
+  let clock = Date.parse('2026-10-18T00:00:00Z'); const database = new D1(schema + await readFile(new URL('../worker/migrations/0004_capture_images.sql', import.meta.url), 'utf8'));
   const sessionRaw = 'session-secret'; const csrf = 'csrf-secret'; const secondRaw = 'second-session';
   database.database.prepare('INSERT INTO users (id,google_sub,email,display_name,picture_url,created_at,updated_at) VALUES (?,?,?,?,?,?,?)').run('user-1', '100000000000000000001', 'owner@example.com', 'Owner', '', clock, clock);
   database.database.prepare('INSERT INTO sessions (id_hash,public_id,user_id,csrf_hash,device_name,created_at,last_seen_at,rotate_after,idle_expires_at,absolute_expires_at) VALUES (?,?,?,?,?,?,?,?,?,?)').run(await sha256Text(sessionRaw), 'session-public-1', 'user-1', await sha256Text(csrf), 'iPhone', clock, clock, clock + 86_400_000, clock + 14 * 86_400_000, clock + 30 * 86_400_000);

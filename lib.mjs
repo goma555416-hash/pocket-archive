@@ -84,6 +84,8 @@ function sanitizeAttachment(data) {
     size,
     mimeType,
     hash: typeof data.hash === 'string' && /^[a-f0-9]{64}$/i.test(data.hash) ? data.hash.toLowerCase() : '',
+    width: Number.isSafeInteger(data.width) && data.width > 0 ? data.width : null,
+    height: Number.isSafeInteger(data.height) && data.height > 0 ? data.height : null,
     path: `attachments/${id}`
   };
 }
@@ -161,6 +163,7 @@ export function createEntry(input) {
 export function createCaptureEntry(job) {
   if (!job || typeof job.id !== 'string' || !SAFE_ID.test(job.id)) throw new Error('快速收件工作 ID 無效');
   const timestamp = Number(job.createdAt); const createdAt = Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : new Date().toISOString();
+  if (job.kind === 'image') return validatedEntry({ id: job.id, kind: 'image', title: job.attachment?.name, attachment: job.attachment, type: '圖片', source: 'ios-shortcut-image', createdAt, updatedAt: createdAt });
   const originalUrl = job.originalUrl || job.url;
   const note = String(job.text || '').replace(originalUrl, '').trim().slice(0, 5000);
   return validatedEntry({

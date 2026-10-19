@@ -1,5 +1,5 @@
 import { createBackupEnvelope, createInboxEnvelope, readOrganized, sha256 } from './lib.mjs';
-import { createZip } from './archive.mjs';
+import { readZip, createZip } from './archive.mjs';
 import { encryptBackup, decryptBackup } from './crypto.mjs';
 import { createJournal, readJournal, reconcileReplica } from './sync.mjs';
 
@@ -75,39 +75,64 @@ export class CloudBackupService {
 export class CloudAiExchange {
   constructor(drive, workspace) { this.drive = drive; this.workspace = workspace; }
 
+  async slot(exportId, fileId, inboxFileId) {
+    if (!fileId) throw new Error('結果占位檔缺失；停止，不另建結果檔');
+    const file = await this.drive.getFile(fileId);
+    if (file.trashed || file.name !== `organized-${exportId}.json` || !file.parents?.includes(this.workspace.aiResults) || file.appProperties?.exportId !== exportId || file.appProperties?.inboxFileId !== inboxFileId || file.appProperties?.paRole !== 'aiResult') throw new Error('結果占位原檔不匹配；停止處理');
+    const blob = await this.drive.downloadFile(fileId);
+    if (blob.size > 8 * 1024 * 1024) throw new Error('雲端 organized.json 超過 8 MB');
+    const raw = JSON.parse(await blob.text());
+    if (raw.format !== 'pocket-archive-organized' || raw.schema_version !== 2 || raw.source_export_id !== exportId || !Array.isArray(raw.items)) throw new Error('結果 export_id 或 schema 不匹配');
+    if (raw.status === 'pending' && raw.items.length) throw new Error('占位檔包含不匹配的結果');
+    return { file, raw };
+  }
+
   async enqueue(entries, repository, now = new Date()) {
     const artifact = await createInboxArtifact(entries, repository, now);
     const jobKey = await sha256(new TextEncoder().encode(entries.map(entry => `${entry.id}:${entry.updatedAt}`).sort().join('|')));
-    const existing = await this.drive.listFiles({ parentId: this.workspace.aiInbox, appRole: 'aiInbox', pageSize: 100 });
-    const duplicate = existing.files?.find(file => file.appProperties?.jobKey === jobKey);
-    if (duplicate) return { duplicate: true, inboxFile: duplicate, exportId: duplicate.appProperties?.exportId, resultFileId: duplicate.appProperties?.resultFileId };
+    const existing = await this.drive.listFiles({ parentId: this.workspace.aiInbox, appRole: 'aiInbox', jobKey, pageSize: 100 });
+    if (existing.nextPageToken) throw new Error('同批次來源檔過多；停止以免重複建立');
+    const duplicates = existing.files?.filter(file => file.appProperties?.jobKey === jobKey) || [];
+    if (duplicates.length > 1) throw new Error('同批次有多個來源檔；停止以免選錯');
+    const duplicate = duplicates[0];
+    if (duplicate) {
+      const exportId = duplicate.appProperties?.exportId; const resultFileId = duplicate.appProperties?.resultFileId;
+      await this.slot(exportId, resultFileId, duplicate.id);
+      return { duplicate: true, inboxFile: duplicate, exportId, resultFileId, itemIds: entries.map(entry => entry.id) };
+    }
     const inboxFile = await this.drive.createFile({
       name: artifact.filename, parentId: this.workspace.aiInbox, blob: artifact.blob, mimeType: artifact.blob.type,
       appProperties: { paRole: 'aiInbox', exportId: artifact.envelope.export_id, jobKey, itemCount: String(entries.length) }
     });
-    const placeholder = {
-      format: 'pocket-archive-organized', schema_version: 2, source_export_id: artifact.envelope.export_id,
-      status: 'pending', items: [], note: 'Codex 必須覆寫此檔案，不可另建結果檔。'
-    };
+    const placeholder = { format: 'pocket-archive-organized', schema_version: 2, source_export_id: artifact.envelope.export_id, status: 'pending', items: [], note: 'Codex 必須覆寫此檔案，不可另建結果檔。' };
     const resultFile = await this.drive.createFile({
       name: `organized-${artifact.envelope.export_id}.json`, parentId: this.workspace.aiResults,
       blob: new Blob([JSON.stringify(placeholder, null, 2)], { type: 'application/json' }), mimeType: 'application/json',
       appProperties: { paRole: 'aiResult', exportId: artifact.envelope.export_id, inboxFileId: inboxFile.id, status: 'pending' }
     });
     await this.drive.updateMetadata(inboxFile.id, { appProperties: { ...inboxFile.appProperties, paRole: 'aiInbox', exportId: artifact.envelope.export_id, jobKey, itemCount: String(entries.length), resultFileId: resultFile.id } });
-    return { duplicate: false, inboxFile, resultFile, exportId: artifact.envelope.export_id, jobKey };
+    return { duplicate: false, inboxFile, resultFile, exportId: artifact.envelope.export_id, jobKey, itemIds: entries.map(entry => entry.id) };
   }
 
   async readResult(job, entries, exportIds) {
-    const fileId = job.resultFile?.id || job.resultFileId;
-    if (!fileId) throw new Error('AI 工作缺少結果檔 ID');
-    const file = await this.drive.getFile(fileId); const blob = await this.drive.downloadFile(fileId);
-    if (blob.size > 8 * 1024 * 1024) throw new Error('雲端 organized.json 超過 8 MB');
-    const text = await blob.text();
-    let raw;
-    try { raw = JSON.parse(text); } catch { throw new Error('雲端結果不是有效 JSON'); }
+    const { file, raw } = await this.slot(job.exportId, job.resultFile?.id || job.resultFileId, job.inboxFileId);
     if (raw.status === 'pending') return { pending: true, file };
-    return { pending: false, file, result: readOrganized(raw, { entries, exportIds }) };
+    let ids = job.itemIds;
+    if (!ids) { // v2.2 jobs: recover the original batch, never use all current entries as the scope.
+      const meta = await this.drive.getFile(job.inboxFileId);
+      if (!meta.parents?.includes(this.workspace.aiInbox) || meta.appProperties?.exportId !== job.exportId) throw new Error('來源批次不匹配');
+      const blob = await this.drive.downloadFile(job.inboxFileId);
+      if (blob.size > 100 * 1024 * 1024) throw new Error('來源批次過大');
+      const text = meta.name.endsWith('.zip') ? new TextDecoder().decode((await readZip(blob)).get('inbox.json')) : await blob.text();
+      const inbox = JSON.parse(text);
+      if (inbox.format !== 'pocket-archive-inbox' || inbox.schema_version !== 2 || inbox.export_id !== job.exportId || !Array.isArray(inbox.items)) throw new Error('來源 schema 或 export_id 不匹配');
+      ids = inbox.items.map(item => item.id);
+    }
+    const expected = new Set(ids); const received = new Set(raw.items.map(item => item.id));
+    if (!expected.size || expected.size !== ids.length || received.size !== raw.items.length || expected.size !== received.size || [...received].some(id => !expected.has(id))) throw new Error('結果 item ID 必須與來源批次完整一對一');
+    const result = readOrganized(raw, { entries, exportIds });
+    if (result.rejected.length) throw new Error('結果含錯誤欄位或已不存在的 item ID');
+    return { pending: false, file, result };
   }
 }
 

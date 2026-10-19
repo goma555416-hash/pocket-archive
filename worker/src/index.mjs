@@ -1,3 +1,4 @@
+import { imageCaptureService } from './capture-images.mjs';
 import {
   CSRF_COOKIE, OAUTH_COOKIE, OWNER_SETUP_COOKIE, SESSION_COOKIE, appendCookie, assertSameOrigin, clearCookie, cookie,
   decryptSecret, encryptSecret, expectedOrigin, json, parseCookies, pkceChallenge, publicError,
@@ -401,18 +402,32 @@ async function submitCapture(request, env) {
   return json({ ok: true, status: 'accepted', jobId: id, message: '已安全送入收件佇列；尚未完成裝置同步' }, 202);
 }
 
+function captureImages(env) {
+  return imageCaptureService({ env, now: () => nowMs(env), driveFetch: (session, target, options) => googleDriveFetch(null, env, session, target, options) });
+}
+
+async function submitImageCapture(request, env) {
+  requireConfiguration(env);
+  const credential = await authenticateCapture(request, env);
+  const policy = await ownerPolicy(env);
+  const user = await env.DB.prepare('SELECT google_sub FROM users WHERE id=?').bind(credential.user_id).first();
+  if (!policy.configured || !user || !safeEqual(policy.ownerSub, user.google_sub)) throw httpError(403, 'unauthorized_account', '收件憑證不屬於目前擁有者');
+  return captureImages(env).submit(request, credential);
+}
+
 async function claimCaptureJobs(request, env) {
   return authenticatedResponse(request, env, { csrf: true }, async session => {
     const now = nowMs(env); const requestedLimit = Number(new URL(request.url).searchParams.get('limit') || 20); const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(20, requestedLimit)) : 20;
     await env.DB.prepare(`DELETE FROM capture_jobs WHERE user_id=? AND ((status='completed' AND completed_at<?) OR (status IN ('failed','expired') AND expires_at<?))`).bind(session.user_id, now - 7 * 86_400_000, now).run();
     await env.DB.prepare(`UPDATE capture_jobs SET status='expired',last_error='retention_expired' WHERE user_id=? AND expires_at<=? AND status IN ('pending','leased')`).bind(session.user_id, now).run();
-    const candidates = await env.DB.prepare(`SELECT id FROM capture_jobs WHERE user_id=? AND (status='pending' OR (status='leased' AND lease_expires_at<=?)) AND expires_at>? ORDER BY created_at LIMIT ?`).bind(session.user_id, now, now, limit).all();
+    const candidates = await env.DB.prepare(`SELECT id FROM capture_jobs WHERE user_id=? AND (source!='ios-shortcut-image' OR EXISTS(SELECT 1 FROM capture_images WHERE job_id=capture_jobs.id AND status='ready')) AND (status='pending' OR (status='leased' AND lease_expires_at<=?)) AND expires_at>? ORDER BY created_at LIMIT ?`).bind(session.user_id, now, now, limit).all();
     const jobs = [];
     for (const candidate of candidates.results || []) {
       const result = await env.DB.prepare(`UPDATE capture_jobs SET status='leased',lease_owner=?,lease_expires_at=?,attempt_count=attempt_count+1 WHERE id=? AND user_id=? AND (status='pending' OR (status='leased' AND lease_expires_at<=?))`).bind(session.public_id, now + 2 * 60_000, candidate.id, session.user_id, now).run();
       if (!Number(result.meta?.changes || 0)) continue;
-      const job = await env.DB.prepare('SELECT id,canonical_url,original_url,shared_text,title,source,created_at,attempt_count FROM capture_jobs WHERE id=?').bind(candidate.id).first();
-      jobs.push({ id: job.id, url: job.canonical_url, originalUrl: job.original_url, text: job.shared_text, title: job.title, source: job.source, createdAt: job.created_at, attemptCount: job.attempt_count });
+      const job = await env.DB.prepare('SELECT id,canonical_url,original_url,shared_text,title,source,created_at,attempt_count,lease_expires_at FROM capture_jobs WHERE id=?').bind(candidate.id).first();
+      const image = job.source === 'ios-shortcut-image' ? await captureImages(env).attachment(job.id, session.user_id) : null;
+      jobs.push({ kind: image ? 'image' : 'link', attachment: image ? { id: `att-${image.hash}`, name: image.name, mimeType: image.mime_type, size: image.size, hash: image.hash } : null, leaseExpiresAt: job.lease_expires_at, id: job.id, url: job.canonical_url, originalUrl: job.original_url, text: job.shared_text, title: job.title, source: job.source, createdAt: job.created_at, attemptCount: job.attempt_count });
     }
     return json({ ok: true, jobs, leaseSeconds: 120 });
   });
@@ -421,15 +436,17 @@ async function claimCaptureJobs(request, env) {
 async function acknowledgeCaptureJob(request, env, id) {
   return authenticatedResponse(request, env, { csrf: true }, async session => {
     const body = await readJson(request); const now = nowMs(env);
+    const job = await env.DB.prepare("SELECT source,attempt_count FROM capture_jobs WHERE id=? AND user_id=? AND status='leased' AND lease_owner=? AND lease_expires_at>? AND expires_at>?").bind(id, session.user_id, session.public_id, now, now).first();
+    if (!job || (job.source === 'ios-shortcut-image' && body.leaseVersion !== job.attempt_count)) throw httpError(409, 'lease_lost', '此工作租約已失效，請重新領取');
+    const condition = " WHERE id=? AND user_id=? AND status='leased' AND lease_owner=? AND lease_expires_at>? AND attempt_count=?";
+    let result;
     if (body.status === 'completed') {
-      const result = await env.DB.prepare(`UPDATE capture_jobs SET status='completed',result=?,completed_at=?,lease_owner=NULL,lease_expires_at=NULL,last_error=NULL,original_url='',shared_text='',title='' WHERE id=? AND user_id=? AND status='leased' AND lease_owner=?`).bind(String(body.result || 'saved').slice(0, 64), now, id, session.user_id, session.public_id).run();
-      if (!Number(result.meta?.changes || 0)) throw httpError(409, 'lease_lost', '此收件工作已由另一裝置處理或租約已失效');
+      result = await env.DB.prepare("UPDATE capture_jobs SET status='completed',result=?,completed_at=?,lease_owner=NULL,lease_expires_at=NULL,last_error=NULL,original_url='',shared_text='',title=''" + condition).bind(String(body.result || 'saved').slice(0, 64), now, id, session.user_id, session.public_id, now, job.attempt_count).run();
     } else if (body.status === 'retry') {
-      const job = await env.DB.prepare('SELECT attempt_count FROM capture_jobs WHERE id=? AND user_id=? AND status=\'leased\' AND lease_owner=?').bind(id, session.user_id, session.public_id).first();
-      if (!job) throw httpError(409, 'lease_lost', '此收件工作已由另一裝置處理或租約已失效');
-      const nextStatus = Number(job.attempt_count) >= 10 ? 'failed' : 'pending';
-      await env.DB.prepare('UPDATE capture_jobs SET status=?,lease_owner=NULL,lease_expires_at=NULL,last_error=? WHERE id=?').bind(nextStatus, String(body.error || 'client_retry').slice(0, 160), id).run();
+      result = await env.DB.prepare("UPDATE capture_jobs SET status='pending',lease_owner=NULL,lease_expires_at=NULL,last_error=?" + condition).bind(String(body.error || 'client_retry').slice(0, 160), id, session.user_id, session.public_id, now, job.attempt_count).run();
     } else throw httpError(400, 'invalid_ack', '收件確認狀態無效');
+    if (!Number(result.meta?.changes || 0)) throw httpError(409, 'lease_lost', '此工作租約已被重新領取');
+    if (body.status === 'completed') await env.DB.prepare("UPDATE capture_images SET status='completed',expires_at=? WHERE job_id=? AND user_id=? AND status='ready'").bind(now + 86_400_000, id, session.user_id).run();
     return json({ ok: true });
   });
 }
@@ -495,6 +512,7 @@ async function driveRouteForSession(request, env, path, session) {
     if (body.parentId) clauses.push(`'${escapeDriveQuery(validFileId(body.parentId))}' in parents`);
     if (body.name) { if (typeof body.name !== 'string' || body.name.length > 240) throw httpError(400, 'invalid_filename', 'Drive 檔名無效'); clauses.push(`name = '${escapeDriveQuery(body.name)}'`); }
     if (body.appRole) { if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(body.appRole)) throw httpError(400, 'invalid_role', 'Drive appRole 無效'); clauses.push(`appProperties has { key='paRole' and value='${escapeDriveQuery(body.appRole)}' }`); }
+    if (body.jobKey) { if (!/^[a-f0-9]{64}$/.test(body.jobKey)) throw httpError(400, 'invalid_job_key', 'AI 工作識別無效'); clauses.push(`appProperties has { key='jobKey' and value='${body.jobKey}' }`); }
     if (body.mimeType) { if (typeof body.mimeType !== 'string' || body.mimeType.length > 160) throw httpError(400, 'invalid_mime', 'Drive MIME type 無效'); clauses.push(`mimeType = '${escapeDriveQuery(body.mimeType)}'`); }
     const params = new URLSearchParams({ q: clauses.join(' and '), spaces: 'drive', orderBy: body.orderBy === 'createdTime desc' ? body.orderBy : 'modifiedTime desc', pageSize: String(Math.max(1, Math.min(100, Number(body.pageSize || 100)))), fields: `nextPageToken,files(${FILE_FIELDS})` });
     return relayGoogle(await googleDriveFetch(request, env, session, `${DRIVE_API}/files?${params}`));
@@ -547,9 +565,11 @@ export async function fetchHandler(request, env, ctx = {}) {
     else if (path === '/api/capture/credentials' && request.method === 'POST') response = await createCaptureCredential(request, env);
     else if (path === '/api/capture/credentials' && request.method === 'GET') response = await listCaptureCredentials(request, env);
     else if (/^\/api\/capture\/credentials\/[A-Za-z0-9_-]{8,64}$/.test(path) && request.method === 'DELETE') response = await revokeCaptureCredential(request, env, path.split('/').pop());
+    else if (path === '/api/capture/images' && request.method === 'POST') response = await submitImageCapture(request, env);
+    else if (/^\/api\/capture\/jobs\/capture_[A-Za-z0-9_-]{8,100}\/content$/.test(path) && request.method === 'GET') response = await authenticatedResponse(request, env, {}, session => captureImages(env).content(path.split('/').at(-2), session, Number(request.headers.get('X-PA-Lease-Version'))));
     else if (path === '/api/capture' && request.method === 'POST') response = await submitCapture(request, env);
     else if (path === '/api/capture/jobs/claim' && request.method === 'POST') response = await claimCaptureJobs(request, env);
-    else if (/^\/api\/capture\/jobs\/capture_[A-Za-z0-9_-]{8,64}\/ack$/.test(path) && request.method === 'POST') response = await acknowledgeCaptureJob(request, env, path.split('/').at(-2));
+    else if (/^\/api\/capture\/jobs\/capture_[A-Za-z0-9_-]{8,100}\/ack$/.test(path) && request.method === 'POST') response = await acknowledgeCaptureJob(request, env, path.split('/').at(-2));
     else if (path.startsWith('/api/drive/')) response = await driveRoute(request, env, path);
     else if (path.startsWith('/api/')) response = json({ ok: false, error: { code: 'not_found', message: '找不到 API' } }, 404);
     else if (env.ASSETS) response = await env.ASSETS.fetch(request);
@@ -561,4 +581,8 @@ export async function fetchHandler(request, env, ctx = {}) {
   }
 }
 
-export default { fetch: fetchHandler };
+export async function scheduledHandler(_event, env, ctx) {
+  const work = captureImages(env).cleanup();
+  if (ctx?.waitUntil) ctx.waitUntil(work); else await work;
+}
+export default { fetch: fetchHandler, scheduled: scheduledHandler };

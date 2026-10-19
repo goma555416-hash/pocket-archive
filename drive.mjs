@@ -184,11 +184,12 @@ export class DriveApi {
     throw lastError;
   }
 
-  listFiles({ parentId = null, name = null, appRole = null, mimeType = null, orderBy = 'modifiedTime desc', pageSize = 100 } = {}) {
+  listFiles({ parentId = null, name = null, appRole = null, mimeType = null, jobKey = null, orderBy = 'modifiedTime desc', pageSize = 100 } = {}) {
     const clauses = ['trashed = false'];
     if (parentId) clauses.push(`'${escapeQuery(parentId)}' in parents`);
     if (name) clauses.push(`name = '${escapeQuery(name)}'`);
     if (appRole) clauses.push(`appProperties has { key='paRole' and value='${escapeQuery(appRole)}' }`);
+    if (jobKey) { if (!/^[a-f0-9]{64}$/.test(jobKey)) throw new Error('AI 工作識別無效'); clauses.push(`appProperties has { key='jobKey' and value='${jobKey}' }`); }
     if (mimeType) clauses.push(`mimeType = '${escapeQuery(mimeType)}'`);
     const params = new URLSearchParams({
       q: clauses.join(' and '), spaces: 'drive', orderBy, pageSize: String(pageSize),

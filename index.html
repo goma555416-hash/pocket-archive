@@ -27,7 +27,7 @@
         <button class="nav-button" data-view="archived" type="button"><span>▤</span> 已封存 <b id="nav-count-archived">0</b></button>
         <button class="nav-button" data-view="all" type="button"><span>▦</span> 全部收藏 <b id="nav-count-all">0</b></button>
       </nav>
-      <div class="side-bottom"><p>收藏值得留下的，<br />其他的慢慢整理。</p><span class="version">LOCAL FIRST · V2.2.0</span></div>
+      <div class="side-bottom"><p>收藏值得留下的，<br />其他的慢慢整理。</p><span class="version">LOCAL FIRST · V2.3.0</span></div>
     </aside>
 
     <div class="workspace">
@@ -158,7 +158,7 @@
       <section class="cloud-section" aria-labelledby="sync-conflict-heading"><h3 id="sync-conflict-heading">同步衝突</h3><div id="sync-conflicts"><p class="privacy-note">目前沒有待處理的同步衝突。</p></div></section>
       <section id="device-sessions-section" class="cloud-section" aria-labelledby="device-sessions-heading" hidden><h3 id="device-sessions-heading">已登入裝置</h3><button id="refresh-device-sessions" type="button" class="button ghost small">更新裝置清單</button><div id="device-sessions"><p class="privacy-note">正在取得工作階段…</p></div></section>
       <section id="shortcut-section" class="cloud-section" aria-labelledby="shortcut-heading" hidden>
-        <h3 id="shortcut-heading">iPhone 一鍵收藏</h3>
+        <h3 id="shortcut-heading">iPhone 一鍵收藏</h3><p class="privacy-note">圖片分享：每張最多 4 MiB、逐張送出；每日 50 MiB／100 次、未清理暫存共 100 MiB，30 次／分鐘。App 直接選圖仍為 25 MB。安全收件後需開啟 App 入庫與同步。原檔保留 Exif／GPS，分享前請自行確認隱私。</p>
         <p class="privacy-note">建立只能新增收件工作的有限憑證；它不能讀取收藏、刪除資料或呼叫 Google Drive。它獨立於 Google 授權，「撤銷 Google 授權」不會暗中停用捷徑；遺失 iPhone 時請在此單獨撤銷。</p>
         <label>裝置名稱<input id="shortcut-device-name" type="text" maxlength="80" value="我的 iPhone" autocomplete="off" /></label>
         <button id="create-shortcut-credential" type="button" class="button outline">建立捷徑憑證</button>
@@ -168,11 +168,19 @@
     </div>
   </dialog>
 
+  <dialog id="image-viewer" class="image-viewer" aria-labelledby="viewer-heading" aria-describedby="viewer-status">
+    <div class="viewer-toolbar"><h2 id="viewer-heading">原始圖片</h2><button type="button" data-viewer-close class="icon-button" aria-label="關閉原圖檢視器">✕</button></div>
+    <div class="viewer-controls"><button type="button" data-zoom="out" aria-label="縮小">−</button><button type="button" data-zoom="reset">100% · 重設</button><button type="button" data-zoom="in" aria-label="放大">＋</button><a class="button outline small" hidden>下載／儲存原檔</a></div>
+    <p id="viewer-status" role="status" aria-live="polite"></p><div class="viewer-surface" tabindex="0" role="region" aria-label="可縮放及捲動的原始圖片"><img alt="" draggable="false" hidden /></div>
+  </dialog>
+
   <dialog id="ai-dialog" aria-labelledby="ai-heading" class="wide-dialog">
     <div class="entry-form"><div class="modal-heading"><div><div class="eyebrow subtle">CODEX ON DEMAND</div><h2 id="ai-heading">Codex 批次整理</h2></div><button type="button" data-close="ai-dialog" class="icon-button" aria-label="關閉">✕</button></div>
-      <ol class="workflow"><li>選取項目；未選時使用全部待整理收藏。</li><li>已連結 Drive 時送到 AI-Inbox，再於 Codex 輸入「整理 Pocket Archive 最新的待整理收藏。」</li><li>App 取得结果後先驗證與預覽；原始網址、備註及附件永不覆寫。</li></ol>
+      <ol class="workflow"><li>選取項目；未選時使用全部待整理收藏。</li><li>已連結 Drive 時送到 AI-Inbox，再一鍵複製此批次專用指令到 Codex。</li><li>App 取得结果後先驗證與預覽；原始網址、備註及附件永不覆寫。</li></ol>
       <div class="action-stack horizontal"><button id="ai-cloud-export" data-requires-cloud type="button" class="button primary" disabled>送到 Drive AI-Inbox</button><button id="ai-cloud-check" data-requires-cloud type="button" class="button outline" disabled>檢查 Drive 整理結果</button></div>
       <p id="ai-cloud-status" class="privacy-note" aria-live="polite">未連結 Drive 時仍可使用下方檔案流程。</p>
+      <div id="codex-launch" hidden><label>此批次 Codex 啟動指令<textarea id="codex-launch-command" rows="8" readonly></textarea></label><button id="copy-codex-launch" type="button" class="button outline">一鍵複製 Codex 指令</button></div>
+      <p class="privacy-note">選對 Codex 工作區不代表已讀取專案規則或已授權 Drive。必須可下載原始 JSON/ZIP、更新占位原檔內容並回讀；能力不足時停止，禁止改搜 Notion。結果仍先預覽、人工勾選套用。</p>
       <details><summary>離線／手動檔案流程</summary><div class="action-stack horizontal details-actions"><button id="export-ai" type="button" class="button ghost">下載待整理批次</button><button id="import-ai" type="button" class="button ghost">匯入 organized.json</button></div></details>
       <div id="ai-preview" class="preview-panel" aria-live="polite"></div><div class="modal-footer"><button id="apply-ai" type="button" class="button primary" hidden>套用勾選建議</button></div>
     </div>

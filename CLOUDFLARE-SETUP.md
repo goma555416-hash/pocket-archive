@@ -73,7 +73,7 @@ Google Cloud Console → **Google Auth Platform → Clients** → 選擇既有 W
 
 Worker 使用 Authorization Code + PKCE，因此 callback 由後端處理。前端對 Worker 的請求都是同來源 `/api/...`，不需要把 Secret 或 Refresh Token 交給瀏覽器。
 
-## 4. 套用三個遠端 D1 migrations
+## 4. 套用遠端 D1 migrations
 
 先列出待套用檔案，再由帳號擁有者確認套用：
 
@@ -88,6 +88,7 @@ npx wrangler d1 migrations list pocket-archive --remote
 1. `0001_auth.sql`
 2. `0002_capture.sql`
 3. `0003_owner_session_security.sql`
+4. `0004_capture_images.sql`（v2.3 新增；既有正式 D1 只需新增此項）
 
 最後一次 `list` 應沒有未套用 migration。這些表只保存驗證、Session、加密 OAuth credential、快捷收件與安全 metadata；不會匯入私人收藏。不要跳過 `0003`，否則唯一擁有者與安全 Session 欄位不存在。
 
@@ -178,3 +179,7 @@ iPhone 快捷憑證只能在擁有者登入後由 UI 建立，權限僅 `capture
 4. 以 D1 確認所有非空密文都有新版本前綴；等待至少五分鐘讓 Session rotation 過渡密文失效並完成 D1 備份後，才能刪除 previous key。
 
 仍有舊版本密文時不可刪除 previous key，否則只能撤銷 credential 並重新授權。「撤銷 Google 授權與所有裝置」會先刪除 D1 整筆 OAuth credential（包含 Refresh Token 密文）與網頁 Session，再 best-effort 呼叫 Google revoke；快捷憑證仍依 UI 說明獨立管理。
+
+## v2.3 更新
+
+已有 v2.2 的擁有者只需依 [CAPTURE-IMAGES.md](./CAPTURE-IMAGES.md) 合併後單一清單備份、核准 0004 migration、部署與 cron，再更新既有捷徑。不要重新設定 Secret／OAuth／擁有者；完整 UAT 見 UAT-V2.3.md。

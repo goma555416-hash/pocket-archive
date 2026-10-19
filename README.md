@@ -4,6 +4,13 @@ Pocket Archive 是給 iPhone／iOS Safari、主畫面 Web App 與 Windows 瀏覽
 
 視覺維持既定 Minimal & Modern、Butter Yellow `#FFF2C9` × Periwinkle `#CBD7EF` 與 A3 實心書籤 Icon。
 
+## v2.3 更新
+
+- 卡片完整呈現圖片，原圖檢視器直接讀 IndexedDB Blob；支援縮放、觸控拖移、鍵盤、原檔下載與 HEIC 解碼失敗說明。
+- 同一 iPhone 捷徑可逐張傳送原始圖片；分享上限 4 MiB／張，本機選圖 25 MB。私有 Drive 暫存與 D1 狀態機詳見 [CAPTURE-IMAGES.md](./CAPTURE-IMAGES.md)。
+- AI-Inbox 送出後產生批次專用 Codex 指令，結果嚴格核對原 file ID／export_id／完整 ID，仍由人勾選套用。
+- 最後一次實機驗收：[UAT-V2.3.md](./UAT-V2.3.md)。
+
 ## 功能
 
 - 單筆或每行一筆批次加入 HTTP(S) 網址；匯入前分列有效、重複與無效項目。URL 去除常見追蹤參數但保留原始輸入。
@@ -64,7 +71,7 @@ python -m http.server 5173
 ### Codex 批次整理
 
 1. 可先勾選要整理的卡片；未勾選時使用全部待整理項目。
-2. 已連結 Drive 時，按「送到 Drive AI-Inbox」，再於已連結 Google Drive 的 Codex 輸入：**「整理 Pocket Archive 最新的待整理收藏。」** Codex 依 [CODEX-DRIVE-WORKFLOW.md](./CODEX-DRIVE-WORKFLOW.md) 原檔覆寫結果占位檔。
+2. 已連結 Drive 時，按「送到 Drive AI-Inbox」，再按「一鍵複製 Codex 指令」貼到有 Drive 原檔下載／更新能力的 Codex。指令指定此批 export_id、必讀儲存庫規則與禁止 Notion；選對工作區不代表已授權 Drive。 Codex 依 [CODEX-DRIVE-WORKFLOW.md](./CODEX-DRIVE-WORKFLOW.md) 原檔覆寫結果占位檔。
 3. 未連結 Drive 時，展開「離線／手動檔案流程」下載 JSON/ZIP，搭配 [CODEX-ORGANIZE-PROMPT.md](./CODEX-ORGANIZE-PROMPT.md) 使用本機 Codex CLI。
 4. 可先驗證：
 

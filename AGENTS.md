@@ -9,3 +9,5 @@
 - When the user says **「整理 Pocket Archive 最新的待整理收藏」**, follow `CODEX-DRIVE-WORKFLOW.md`: use only the authorized Pocket Archive Drive folders, validate schema/IDs, and update the App-created result placeholder in place.
 - Never commit private exports/images, tokens or credentials. Do not publicly deploy, delete user data, start paid services or access private accounts without authorization. Work around blocked external operations and document the necessary user action at the end.
 - Test in browser or automate where possible, explain any untested iOS device-only steps, keep a concise final manual UAT checklist. No claims of successful tests without executing them.
+
+- AI startup must follow the App’s batch-specific export_id. Read CODEX-DRIVE-WORKFLOW.md and CODEX-ORGANIZE-PROMPT.md first. Never search Notion or other private workspaces. Missing Drive raw JSON/ZIP download, in-place content update, or read-back capability is a fail-closed blocker; never substitute another source or create a replacement result file.

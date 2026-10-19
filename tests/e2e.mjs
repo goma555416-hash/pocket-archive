@@ -49,7 +49,7 @@ try {
   profile = await mkdtemp(join(tmpdir(), 'pocket-archive-e2e-'));
   server = spawn('python', ['-m', 'http.server', '4173', '--bind', '127.0.0.1'], { cwd: new URL('..', import.meta.url).pathname, stdio: 'ignore' });
   await waitFor(async () => (await fetch(HOST)).ok, '本機 HTTP 伺服器');
-  browser = spawn('/usr/bin/chromium', ['--headless=new', '--no-sandbox', '--disable-gpu', '--remote-debugging-port=9223', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore' });
+  browser = spawn(process.env.CHROMIUM_PATH || '/usr/bin/chromium', ['--headless=new', '--no-sandbox', '--disable-gpu', '--remote-debugging-port=9223', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore' });
   const version = await waitFor(async () => { const response = await fetch(`${DEBUG}/json/version`); return response.ok && response.json(); }, 'Chromium DevTools');
   assert.ok(version.Browser.includes('Chrome'));
   const target = await fetch(`${DEBUG}/json/new?about:blank`, { method: 'PUT' }).then(response => response.json());
@@ -94,13 +94,40 @@ try {
 
   await cdp.evaluate(`(() => {
     document.querySelector('#image-button').click();
-    const file=new File([new Uint8Array([137,80,78,71,13,10,26,10])],'tiny.png',{type:'image/png'}); const transfer=new DataTransfer(); transfer.items.add(file); const input=document.querySelector('#image-files'); input.files=transfer.files; input.dispatchEvent(new Event('change',{bubbles:true}));
+    const canvas=document.createElement('canvas'); canvas.width=100; canvas.height=600; canvas.getContext('2d').fillRect(0,0,100,600); const bytes=Uint8Array.from(atob(canvas.toDataURL('image/png').split(',')[1]),c=>c.charCodeAt(0)); const file=new File([bytes],'tiny.png',{type:'image/png'}); const transfer=new DataTransfer(); transfer.items.add(file); const input=document.querySelector('#image-files'); input.files=transfer.files; input.dispatchEvent(new Event('change',{bubbles:true}));
   })()`);
   await waitFor(() => cdp.evaluate("document.querySelector('#image-preview').textContent.includes('1 張可加入')"), '圖片 hash 預覽');
   await cdp.evaluate("document.querySelector('#image-form').requestSubmit()");
   await waitFor(() => cdp.evaluate("document.querySelectorAll('.item-card').length === 5"), '圖片 IndexedDB 儲存');
   process.stdout.write('E2E：新增、批次與圖片通過\n');
   assert.equal(await cdp.evaluate("document.querySelectorAll('[data-attachment-id]').length"), 1);
+
+  await cdp.evaluate(`(() => { const button=document.querySelector('[data-view-image]'); button.focus(); button.click(); })()`);
+  await waitFor(() => cdp.evaluate("document.querySelector('#viewer-status').textContent.includes('100 × 600')"), '原始圖片尺寸');
+  assert.equal(await cdp.evaluate("getComputedStyle(document.querySelector('.original-preview img')).objectFit"), 'contain');
+  assert.equal(await cdp.evaluate("document.querySelector('#image-viewer a').download"), 'tiny.png');
+  const beforeZoom = await cdp.evaluate("document.querySelector('#image-viewer img').width");
+  await cdp.evaluate("document.querySelector('[data-zoom=in]').click()");
+  assert.ok(await cdp.evaluate("document.querySelector('#image-viewer img').width") > beforeZoom);
+  assert.equal(await cdp.evaluate("document.activeElement.closest('#image-viewer') !== null"), true);
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await waitFor(() => cdp.evaluate("!document.querySelector('#image-viewer').open"), 'ESC 關閉原圖');
+  assert.equal(await cdp.evaluate("document.activeElement.matches('[data-view-image]')"), true, '還原圖片按鈕焦點');
+  assert.equal(await cdp.evaluate("document.querySelector('#image-viewer img').hasAttribute('src')"), false, '釋放原圖 URL');
+  const atomicCapture = await cdp.evaluate(`(async () => {
+    const { initRepository } = await import('./db.mjs'); const { sha256, createCaptureEntry } = await import('./lib.mjs');
+    const { repository } = await initRepository(); const entry=(await repository.listEntries()).find(e=>e.attachment); const blob=await repository.getAttachment(entry.attachment.id);
+    const oldJournal=await repository.getMeta('sync-journal',{}); const oldReceipts=await repository.getMeta('capture-receipts',[]);
+    const captured=createCaptureEntry({id:'capture-atomic-e2e',kind:'image',attachment:{...entry.attachment,id:'att-capture-e2e'},createdAt:Date.now()});
+    // A different hash exercises an actual atomic write; second call must reuse the receipt.
+    captured.attachment.hash='a'.repeat(64);
+    const first=await repository.commitCapture(captured,blob,'e2e'); const second=await repository.commitCapture(captured,blob,'e2e');
+    const saved=await repository.getAttachment(captured.attachment.id); const receipt=await repository.getMeta('capture-receipts');
+    await repository.deleteEntry(captured); await repository.setMeta('sync-journal',oldJournal); await repository.setMeta('capture-receipts',oldReceipts); return {first,second,receipt:receipt.includes(captured.id),hash:await sha256(saved),original:await sha256(blob)};
+  })()`);
+  assert.deepEqual(atomicCapture, {first:'saved',second:'duplicate',receipt:true,hash:atomicCapture.original,original:atomicCapture.original});
+  process.stdout.write('E2E：完整圖片、原圖縮放、ESC、焦點、原子收件與冪等紀錄通過\n');
 
   await cdp.evaluate(`(() => { const input=document.querySelector('#search-input'); input.value='測試分類 自動化'; input.dispatchEvent(new Event('input',{bubbles:true})); })()`);
   assert.equal(await cdp.evaluate("document.querySelectorAll('.item-card').length"), 1, '搜尋跨分類與標籤');

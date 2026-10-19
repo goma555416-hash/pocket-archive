@@ -26,6 +26,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - run: npm run test:security
+      - name: Browser regression
+        run: npm run test:e2e
+        env:
+          CHROMIUM_PATH: /usr/bin/google-chrome
       - name: Validate Static Assets exclusions
         run: npm run test:assets
         env:
