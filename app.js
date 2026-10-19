@@ -875,15 +875,20 @@ async function enqueueCloudAi() {
   state.cloudBusy = true; renderCloudStatus();
   try {
     const job = await state.aiExchange.enqueue(chosen, state.repository);
+    const evidence = await state.aiExchange.launchEvidence({ exportId: job.exportId, inboxFileId: job.inboxFile.id, resultFileId: job.resultFile?.id || job.resultFileId, itemIds: job.itemIds });
     const exportIds = await state.repository.getMeta('ai-export-ids', []);
     if (job.exportId && !exportIds.includes(job.exportId)) await state.repository.setMeta('ai-export-ids', [job.exportId, ...exportIds].slice(0, 50));
     if (!job.duplicate || (job.resultFileId && !state.cloudJobs.some(item => item.exportId === job.exportId))) {
-      state.cloudJobs.unshift({ exportId: job.exportId, inboxFileId: job.inboxFile.id, resultFileId: job.resultFile?.id || job.resultFileId, itemIds: job.itemIds, createdAt: new Date().toISOString(), status: 'pending' });
-      state.cloudJobs = state.cloudJobs.slice(0, 50); await state.repository.setMeta('cloud-ai-jobs', state.cloudJobs);
+      state.cloudJobs.unshift({ exportId: job.exportId, inboxFileId: job.inboxFile.id, resultFileId: job.resultFile?.id || job.resultFileId, itemIds: job.itemIds, launchEvidence: evidence, createdAt: new Date().toISOString(), status: 'pending' });
+      state.cloudJobs = state.cloudJobs.slice(0, 50);
+    } else {
+      const retainedJob = state.cloudJobs.find(item => item.exportId === job.exportId);
+      retainedJob.launchEvidence = evidence; retainedJob.itemIds = job.itemIds;
     }
+    await state.repository.setMeta('cloud-ai-jobs', state.cloudJobs);
     $('#ai-cloud-status').textContent = job.duplicate ? '相同批次已存在，未重複建立。請複製此批次指令。' : `已送出 ${chosen.length} 筆。請複製此批次指令到 Codex。`;
     state.activeAiExportId = job.exportId; await state.repository.setMeta('active-ai-export-id', job.exportId);
-    $('#codex-launch-command').value = codexLaunchCommand(job.exportId); $('#codex-launch').hidden = false;
+    $('#codex-launch-command').value = codexLaunchCommand(job.exportId, evidence); $('#codex-launch').hidden = false;
     toast(job.duplicate ? '相同 AI 工作已存在' : '已建立 Drive AI-Inbox 與結果占位檔 ✓');
   } catch (error) { toast(`送到 AI-Inbox 失敗：${error.message}`, 8500); }
   finally { state.cloudBusy = false; renderCloudStatus(); }
@@ -910,7 +915,7 @@ function bindEvents() {
   $('#new-button').addEventListener('click', () => openEditor()); $('#mobile-new').addEventListener('click', () => openEditor()); $('#empty-add').addEventListener('click', () => openEditor());
   $('#batch-button').addEventListener('click', () => { $('#batch-form').reset(); state.batch = []; $('#batch-preview').innerHTML = ''; $('#batch-save').disabled = true; openDialog('batch-dialog'); });
   $('#image-button').addEventListener('click', () => { $('#image-form').reset(); state.images = []; $('#image-preview').innerHTML = ''; $('#image-save').disabled = true; openDialog('image-dialog'); });
-  $('#backup-button').addEventListener('click', () => { openDialog('backup-dialog'); updateStorageSummary(); }); $('#ai-button').addEventListener('click', () => { const job = state.cloudJobs.find(item => item.exportId === state.activeAiExportId) || state.cloudJobs.find(item => item.status !== 'applied'); if (job) { state.activeAiExportId = job.exportId; $('#codex-launch-command').value = codexLaunchCommand(job.exportId); $('#codex-launch').hidden = false; } openDialog('ai-dialog'); });
+  $('#backup-button').addEventListener('click', () => { openDialog('backup-dialog'); updateStorageSummary(); }); $('#ai-button').addEventListener('click', () => { const job = state.cloudJobs.find(item => item.exportId === state.activeAiExportId) || state.cloudJobs.find(item => item.status !== 'applied'); if (job) { state.activeAiExportId = job.exportId; $('#codex-launch-command').value = codexLaunchCommand(job.exportId, job.launchEvidence); $('#codex-launch').hidden = false; } openDialog('ai-dialog'); });
   $('#cloud-button').addEventListener('click', () => { openDialog('cloud-dialog'); if (!state.backendAvailable) preloadGoogleIdentity(); renderCloudStatus(); if (cloudConnected()) { refreshCloudBackups(); refreshBackendSessions(); } });
   $$('[data-close]').forEach(button => button.addEventListener('click', () => closeDialog(button.dataset.close)));
   $$('dialog').forEach(dialog => {
