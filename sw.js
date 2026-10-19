@@ -1,4 +1,4 @@
-const CACHE = 'pocket-archive-v2.3.0-viewer-cleanup';
+const CACHE = 'pocket-archive-v2.3.1-ai-handoff';
 const RESOURCES = ['./','./index.html','./styles.css','./theme.css','./app.js','./lib.mjs','./db.mjs','./archive.mjs','./drive.mjs','./backend.mjs','./migration.mjs','./crypto.mjs','./sync.mjs','./cloud.mjs','./image-viewer.mjs','./ai-launch.mjs','./capture-client.mjs','./manifest.webmanifest','./icons/icon.svg','./icons/icon-180.png','./icons/icon-192.png','./icons/icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(RESOURCES)).then(() => self.skipWaiting()));
