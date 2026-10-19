@@ -114,6 +114,56 @@ export class CloudAiExchange {
     return { duplicate: false, inboxFile, resultFile, exportId: artifact.envelope.export_id, jobKey, itemIds: entries.map(entry => entry.id) };
   }
 
+  // Metadata is validated using the App's existing Google Drive grant.
+  // Export only routing IDs and hashes; never export collection content/tokens.
+  async launchEvidence(job) {
+    const exportId = job.exportId;
+    const inboxId = job.inboxFileId;
+    const resultId = job.resultFileId;
+    if (!/^export-[A-Za-z0-9._:-]{1,110}$/.test(exportId || '') || !inboxId || !resultId) throw new Error('AI 批次識別或 file ID 缺失');
+    const [inbox, checked] = await Promise.all([
+      this.drive.getFile(inboxId),
+      this.slot(exportId, resultId, inboxId)
+    ]);
+    const result = checked.file;
+    if (checked.raw.status !== 'pending' || checked.raw.items.length) throw new Error('結果原檔不是未處理占位檔，禁止覆寫');
+    const validName = inbox.name?.startsWith('pocket-archive-inbox-') &&
+      (inbox.name.endsWith('-' + exportId + '.json') || inbox.name.endsWith('-' + exportId + '.zip'));
+    if (inbox.trashed || !validName || !inbox.parents?.includes(this.workspace.aiInbox) ||
+        !['application/json', 'application/zip'].includes(inbox.mimeType) ||
+        inbox.appProperties?.paRole !== 'aiInbox' || inbox.appProperties?.exportId !== exportId ||
+        inbox.appProperties?.resultFileId !== resultId ||
+        result.mimeType !== 'application/json') throw new Error('來源批次 metadata 與結果檔綁定不匹配；停止');
+    const [sources, slots] = await Promise.all([
+      this.drive.listFiles({ parentId: this.workspace.aiInbox, name: inbox.name, pageSize: 10 }),
+      this.drive.listFiles({ parentId: this.workspace.aiResults, name: result.name, pageSize: 10 })
+    ]);
+    if (sources.nextPageToken || slots.nextPageToken ||
+        sources.files?.length !== 1 || sources.files[0].id !== inboxId ||
+        slots.files?.length !== 1 || slots.files[0].id !== resultId) throw new Error('AI 批次／占位檔不唯一或不可列舉；停止');
+    const [inboxBlob, pendingBlob] = await Promise.all([
+      this.drive.downloadFile(inboxId), this.drive.downloadFile(resultId)
+    ]);
+    if (inboxBlob.size > 100 * 1024 * 1024 || pendingBlob.size > 8 * 1024 * 1024) throw new Error('批次或占位檔過大，停止驗證');
+    const inboxText = inbox.name.endsWith('.zip')
+      ? new TextDecoder().decode((await readZip(inboxBlob)).get('inbox.json'))
+      : await inboxBlob.text();
+    const envelope = JSON.parse(inboxText);
+    const ids = envelope.items?.map(item => item.id);
+    const expected = job.itemIds || [];
+    if (envelope.format !== 'pocket-archive-inbox' || envelope.schema_version !== 2 ||
+        envelope.export_id !== exportId || !Array.isArray(ids) || !ids.length ||
+        ids.some(id => typeof id !== 'string') || new Set(ids).size !== ids.length ||
+        ids.length !== expected.length || ids.some(id => !expected.includes(id))) throw new Error('AI 來源 schema 或 item ID 不匹配；停止');
+    return {
+      version: 1, exportId,
+      inboxFileId: inboxId, resultFileId: resultId,
+      inboxFolderId: this.workspace.aiInbox, resultsFolderId: this.workspace.aiResults,
+      inboxName: inbox.name, resultName: result.name,
+      inboxSha256: await sha256(inboxBlob), pendingSha256: await sha256(pendingBlob)
+    };
+  }
+
   async readResult(job, entries, exportIds) {
     const { file, raw } = await this.slot(job.exportId, job.resultFile?.id || job.resultFileId, job.inboxFileId);
     if (raw.status === 'pending') return { pending: true, file };
