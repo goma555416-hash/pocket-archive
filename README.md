@@ -8,7 +8,7 @@ Pocket Archive 是給 iPhone／iOS Safari、主畫面 Web App 與 Windows 瀏覽
 
 - 卡片完整呈現圖片，原圖檢視器直接讀 IndexedDB Blob；支援縮放、觸控拖移、鍵盤、原檔下載與 HEIC 解碼失敗說明。
 - 同一 iPhone 捷徑可逐張傳送原始圖片；分享上限 4 MiB／張，本機選圖 25 MB。私有 Drive 暫存與 D1 狀態機詳見 [CAPTURE-IMAGES.md](./CAPTURE-IMAGES.md)。
-- AI-Inbox 送出後產生批次專用 Codex 指令，結果嚴格核對原 file ID／export_id／完整 ID，仍由人勾選套用。
+- AI-Inbox 送出後由 App 先驗證原檔 metadata／SHA-256，再產生含檔案 ID 與雜湊的批次專用 Codex 指令（v2.3.1）；Codex 原檔寫回仍須驗證，結果由人勾選套用。
 - 最後一次實機驗收：[UAT-V2.3.md](./UAT-V2.3.md)。
 
 ## 功能
