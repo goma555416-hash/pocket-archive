@@ -882,7 +882,7 @@ async function enqueueCloudAi() {
       state.cloudJobs = state.cloudJobs.slice(0, 50); await state.repository.setMeta('cloud-ai-jobs', state.cloudJobs);
     }
     $('#ai-cloud-status').textContent = job.duplicate ? '相同批次已存在，未重複建立。請複製此批次指令。' : `已送出 ${chosen.length} 筆。請複製此批次指令到 Codex。`;
-    state.activeAiExportId = job.exportId;
+    state.activeAiExportId = job.exportId; await state.repository.setMeta('active-ai-export-id', job.exportId);
     $('#codex-launch-command').value = codexLaunchCommand(job.exportId); $('#codex-launch').hidden = false;
     toast(job.duplicate ? '相同 AI 工作已存在' : '已建立 Drive AI-Inbox 與結果占位檔 ✓');
   } catch (error) { toast(`送到 AI-Inbox 失敗：${error.message}`, 8500); }
@@ -976,7 +976,7 @@ async function init() {
     const { repository, migration } = await initRepository(); state.repository = repository; state.entries = await repository.listEntries();
     state.deviceId = await repository.getMeta('device-id') || makeId('device'); await repository.setMeta('device-id', state.deviceId);
     state.syncJournal = await repository.getMeta('sync-journal', {}); state.tombstones = await repository.getMeta('sync-tombstones', {});
-    state.cloudConflicts = await repository.getMeta('sync-conflicts', []); state.cloudJobs = await repository.getMeta('cloud-ai-jobs', []);
+    state.cloudConflicts = await repository.getMeta('sync-conflicts', []); state.cloudJobs = await repository.getMeta('cloud-ai-jobs', []); state.activeAiExportId = await repository.getMeta('active-ai-export-id', '');
     state.cloudSettings = { ...state.cloudSettings, ...(await repository.getMeta('cloud-settings', {})) };
     $('#google-client-id').value = state.cloudSettings.clientId || ''; $('#cloud-auto-backup').checked = state.cloudSettings.autoBackup !== false;
     $('#cloud-retention').value = state.cloudSettings.retention || 5; $('#cloud-encryption').checked = Boolean(state.cloudSettings.encryption);
