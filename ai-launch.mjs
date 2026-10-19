@@ -26,7 +26,7 @@ function launchEvidenceText(exportId, evidence) {
     '先以精確 file ID 直接下載，不要只用搜尋結果判斷檔案是否存在。Codex 必須獨立比對兩個原檔的 parent、name、MIME、上述 SHA-256、export_id、pending 與完整 item IDs；若缺少任何可比對資訊就 fail closed。',
     '若連接器沒有顯示 appProperties，僅可使用以上 App 端已驗證的 metadata 作為交接依據；App 會在讀取最終結果時再以自身授權重新驗證原始 appProperties。若下載雜湊或其他條件不符，不得覆寫。',
     '進行正式覆寫前確認連接器可將完整 JSON 原始位元組以 update_file(fileId, file_uri) 更新既有 result file ID，且可回讀驗證；不得以新建檔、metadata rename/move 或單純可讀取取代寫入測試。'
-  ].join('\\n');
+  ].join('\n');
 }
 
 // Contains routing metadata only; never interpolate collection content or private URLs.
