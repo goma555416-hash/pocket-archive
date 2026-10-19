@@ -6,7 +6,7 @@
 
 - 基線 `npm test`：12 個測試檔通過，語法檢查通過。
 - v2.3 `npm test`：13 個測試檔通過，含新增模組語法檢查。
-- `node --test --test-isolation=none tests/*.test.mjs`：73 cases，73 pass、0 fail、0 skip（Node 24.19.0；含 SQLite 真實 SQL 整合）。
+- `node --test --test-isolation=none tests/*.test.mjs`：74 cases，74 pass、0 fail、0 skip（Node 24.19.0；含 SQLite 真實 SQL 整合）。
 - `npm run test:security`：4 個測試檔通過；新增捷徑圖片、格式、完整性、配額、租約版本與清理失敗測試。
 - `node scripts/validate-organized.mjs examples/organized-example.json examples/inbox-example.json`：2 筆匿名結果通過。
 - `git diff --check` 通過。

@@ -1,5 +1,5 @@
 import { receiveCaptureJob, imageDimensions } from './capture-client.mjs';
-import { codexLaunchCommand } from './ai-launch.mjs';
+import { codexLaunchCommand, cloudAiJobForReview } from './ai-launch.mjs';
 import { createImageViewer } from './image-viewer.mjs';
 import {
   TYPES, ALLOWED_IMAGE_TYPES, MAX_IMAGE_BYTES, cleanTags, normalizeUrl, displayHost, inferType,
@@ -25,7 +25,7 @@ const state = {
   cloudPassphrase: '', auth: null, drive: null, workspace: null, backupService: null, aiExchange: null, syncService: null,
   cloudUser: null, cloudBusy: false, backupTimer: null, syncTimer: null,
   backend: null, backendAvailable: false, backendOwner: null, backendSession: null, backendSessions: [],
-  captureCredentials: [], captureBusy: false,
+  captureCredentials: [], captureBusy: false, localWriteBusy: 0, activeAiExportId: '',
   googleIdentityStatus: 'idle', googleIdentityPromise: null
 };
 const names = { inbox: ['收件匣', '尚未整理的收藏'], saved: ['已整理', '已經整理好的收藏'], archived: ['已封存', '暫時收起的收藏'], all: ['全部收藏', '這裡收著所有值得留下的事物'] };
@@ -162,6 +162,8 @@ function render() {
 }
 
 async function persistEntries(nextEntries, message) {
+  if (state.captureBusy) { toast('正在安全接收收藏，請稍後再儲存變更'); return false; }
+  state.localWriteBusy++;
   try {
     const sync = recordLocalChanges(state.entries, nextEntries, { deviceId: state.deviceId, journal: state.syncJournal, tombstones: state.tombstones });
     const retained = new Set(sync.entries.map(entry => entry.id));
@@ -175,6 +177,12 @@ async function persistEntries(nextEntries, message) {
     scheduleAutoBackup(); scheduleAutoSync();
     render(); if (message) toast(message); return true;
   } catch (error) { toast(error.message, 6500); return false; }
+  finally { state.localWriteBusy--; }
+}
+
+async function localEntryMutation(action) {
+  if (state.captureBusy) { toast('正在安全接收收藏，請稍後再試'); return; }
+  state.localWriteBusy++; try { return await action(); } finally { state.localWriteBusy--; }
 }
 
 function openEditor(entry = null, incoming = null) {
@@ -458,7 +466,7 @@ async function applyOrganized() {
   try {
     await state.repository.setMeta('ai-undo-snapshot', { entries: result.snapshot, at: new Date().toISOString() });
     if (!await persistEntries(result.entries)) return;
-    const readyJob = state.cloudJobs.find(job => job.status === 'ready');
+    const readyJob = state.cloudJobs.find(job => job.exportId === state.pendingSuggestions.sourceExportId && job.status === 'ready');
     if (readyJob) { readyJob.status = 'applied'; await state.repository.setMeta('cloud-ai-jobs', state.cloudJobs); }
     state.pendingSuggestions = null; render(); $('#ai-preview').innerHTML = ''; $('#apply-ai').hidden = true; closeDialog('ai-dialog'); toast(`已套用 ${result.applied} 筆；可從備份視窗單次復原 ✓`);
   } catch (error) { toast(error.message, 7000); }
@@ -698,7 +706,7 @@ async function createCaptureCredential() {
 
 async function importCaptureJobs() {
   if (!state.backendSession || state.captureBusy) return;
-  if (state.cloudBusy) { setTimeout(importCaptureJobs, 1500); return; }
+  if (state.cloudBusy || state.localWriteBusy) { setTimeout(importCaptureJobs, 1500); return; }
   state.captureBusy = true; state.cloudBusy = true; let saved = 0; let duplicates = 0;
   try {
     // Claim one at a time so large/multiple images do not spend their lease waiting.
@@ -874,6 +882,7 @@ async function enqueueCloudAi() {
       state.cloudJobs = state.cloudJobs.slice(0, 50); await state.repository.setMeta('cloud-ai-jobs', state.cloudJobs);
     }
     $('#ai-cloud-status').textContent = job.duplicate ? '相同批次已存在，未重複建立。請複製此批次指令。' : `已送出 ${chosen.length} 筆。請複製此批次指令到 Codex。`;
+    state.activeAiExportId = job.exportId;
     $('#codex-launch-command').value = codexLaunchCommand(job.exportId); $('#codex-launch').hidden = false;
     toast(job.duplicate ? '相同 AI 工作已存在' : '已建立 Drive AI-Inbox 與結果占位檔 ✓');
   } catch (error) { toast(`送到 AI-Inbox 失敗：${error.message}`, 8500); }
@@ -882,7 +891,9 @@ async function enqueueCloudAi() {
 
 async function checkCloudAi() {
   if (!cloudConnected() || state.cloudBusy) return;
-  const job = state.cloudJobs.find(item => item.status !== 'applied');
+  let job;
+  try { job = cloudAiJobForReview(state.cloudJobs, state.activeAiExportId); } catch (error) { toast(error.message); return; }
+  if (job?.status === 'applied') { toast('此批次已套用，未重複處理'); return; }
   if (!job) { toast('沒有由此裝置建立的待檢查 AI 工作'); return; }
   state.cloudBusy = true; renderCloudStatus();
   try {
@@ -899,7 +910,7 @@ function bindEvents() {
   $('#new-button').addEventListener('click', () => openEditor()); $('#mobile-new').addEventListener('click', () => openEditor()); $('#empty-add').addEventListener('click', () => openEditor());
   $('#batch-button').addEventListener('click', () => { $('#batch-form').reset(); state.batch = []; $('#batch-preview').innerHTML = ''; $('#batch-save').disabled = true; openDialog('batch-dialog'); });
   $('#image-button').addEventListener('click', () => { $('#image-form').reset(); state.images = []; $('#image-preview').innerHTML = ''; $('#image-save').disabled = true; openDialog('image-dialog'); });
-  $('#backup-button').addEventListener('click', () => { openDialog('backup-dialog'); updateStorageSummary(); }); $('#ai-button').addEventListener('click', () => { const job = state.cloudJobs.find(item => item.status !== 'applied'); if (job) { $('#codex-launch-command').value = codexLaunchCommand(job.exportId); $('#codex-launch').hidden = false; } openDialog('ai-dialog'); });
+  $('#backup-button').addEventListener('click', () => { openDialog('backup-dialog'); updateStorageSummary(); }); $('#ai-button').addEventListener('click', () => { const job = state.cloudJobs.find(item => item.exportId === state.activeAiExportId) || state.cloudJobs.find(item => item.status !== 'applied'); if (job) { state.activeAiExportId = job.exportId; $('#codex-launch-command').value = codexLaunchCommand(job.exportId); $('#codex-launch').hidden = false; } openDialog('ai-dialog'); });
   $('#cloud-button').addEventListener('click', () => { openDialog('cloud-dialog'); if (!state.backendAvailable) preloadGoogleIdentity(); renderCloudStatus(); if (cloudConnected()) { refreshCloudBackups(); refreshBackendSessions(); } });
   $$('[data-close]').forEach(button => button.addEventListener('click', () => closeDialog(button.dataset.close)));
   $$('dialog').forEach(dialog => {
@@ -909,12 +920,13 @@ function bindEvents() {
       if (node.parentElement === dialog || dialog.contains(node)) document.body.append(node);
     });
   });
-  $('#entry-form').addEventListener('submit', saveFromForm); $('#batch-form').addEventListener('submit', saveBatch); $('#image-form').addEventListener('submit', saveImages);
+  $('#entry-form').addEventListener('submit', saveFromForm); $('#batch-form').addEventListener('submit', saveBatch); $('#image-form').addEventListener('submit', event => localEntryMutation(() => saveImages(event)));
+  $('#image-form').addEventListener('submit', event => event.preventDefault());
   $('#paste-url').addEventListener('click', async () => { try { $('#entry-url').value = (await navigator.clipboard.readText()).trim(); } catch { toast('剪貼簿無法讀取，請手動貼上'); } });
   $('#paste-inbox').addEventListener('click', readClipboardToBatch); $('#fetch-title').addEventListener('click', fetchTitle); $('#batch-preview-button').addEventListener('click', previewBatch); $('#batch-text').addEventListener('input', previewBatch);
   $('#image-files').addEventListener('change', event => prepareImages(event.target.files));
   const drop = $('#drop-zone'); ['dragenter', 'dragover'].forEach(name => drop.addEventListener(name, event => { event.preventDefault(); drop.classList.add('is-dragging'); })); ['dragleave', 'drop'].forEach(name => drop.addEventListener(name, event => { event.preventDefault(); drop.classList.remove('is-dragging'); })); drop.addEventListener('drop', event => prepareImages(event.dataTransfer.files));
-  $('#export-backup').addEventListener('click', exportBackup); $('#export-migration').addEventListener('click', exportMigrationPackage); $('#import-backup').addEventListener('click', () => $('#backup-file').click()); $('#backup-file').addEventListener('change', importBackupFile); $('#confirm-import').addEventListener('click', confirmImport);
+  $('#export-backup').addEventListener('click', exportBackup); $('#export-migration').addEventListener('click', exportMigrationPackage); $('#import-backup').addEventListener('click', () => $('#backup-file').click()); $('#backup-file').addEventListener('change', importBackupFile); $('#confirm-import').addEventListener('click', () => localEntryMutation(confirmImport));
   $('#migration-banner-backup').addEventListener('click', () => openDialog('backup-dialog'));
   $('#export-ai').addEventListener('click', exportForCodex); $('#import-ai').addEventListener('click', () => $('#organized-file').click()); $('#organized-file').addEventListener('change', importOrganized); $('#apply-ai').addEventListener('click', applyOrganized); $('#undo-ai').addEventListener('click', undoAi);
   $('#cloud-connect').addEventListener('click', connectDrive); $('#cloud-disconnect').addEventListener('click', disconnectDrive);

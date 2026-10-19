@@ -190,3 +190,13 @@ test('AI 結果原檔與完整 ID 驗證 fail closed，重複批次不能另建�
   drive.listFiles = async () => ({ files: [{ id: 'inbox-file', appProperties: { jobKey, exportId } }] });
   await assert.rejects(() => exchange.enqueue([entry], {}), /占位檔缺失/); assert.equal(creates, 0);
 });
+
+
+test('AI 檢查保持畫面所選批次，不因重複送出跳到另一個待處理批次', async () => {
+  const { cloudAiJobForReview } = await import('../ai-launch.mjs');
+  const jobs = [{ exportId: 'export-new', status: 'pending' }, { exportId: 'export-old', status: 'ready' }, { exportId: 'export-applied', status: 'applied' }];
+  assert.equal(cloudAiJobForReview(jobs, 'export-old').exportId, 'export-old');
+  assert.equal(cloudAiJobForReview(jobs, 'export-applied').status, 'applied');
+  assert.throws(() => cloudAiJobForReview(jobs, 'export-missing'), /不改選/);
+  assert.equal(cloudAiJobForReview(jobs).exportId, 'export-new');
+});

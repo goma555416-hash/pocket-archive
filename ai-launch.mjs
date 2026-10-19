@@ -8,3 +8,12 @@ export function codexLaunchCommand(exportId) {
 只處理 export_id=${exportId}，不要改選最新批次。驗證 schema v2 與完整 item ID 一對一；資料不足使用 insufficient_data，不臆測。已完成結果須先驗證且不重做。
 將驗證通過的結果寫回 AI-Results/organized-${exportId}.json 的同一 file ID，回讀驗證內容後才回報。App 必須保留逐項預覽與人工勾選套用，不自動更動真實收藏。不使用額外 AI API。`;
 }
+
+export function cloudAiJobForReview(jobs, exportId = '') {
+  if (exportId) {
+    const job = jobs.find(item => item.exportId === exportId);
+    if (!job) throw new Error('指定的 AI 批次不存在；不改選其他工作');
+    return job;
+  }
+  return jobs.find(item => item.status !== 'applied') || null;
+}
