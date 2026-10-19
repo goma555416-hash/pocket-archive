@@ -1,15 +1,15 @@
 {
   "name": "pocket-archive",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.mjs && npm run check",
-    "test:security": "node --test tests/worker.test.mjs tests/backend.test.mjs",
+    "test:security": "node --test tests/worker.test.mjs tests/backend.test.mjs tests/capture.test.mjs tests/capture-images.test.mjs",
     "test:assets": "node scripts/validate-static-assets.mjs",
     "test:e2e": "node tests/e2e.mjs",
     "test:all": "npm test && npm run test:assets && npm run test:e2e",
-    "check": "node --check app.js && node --check lib.mjs && node --check db.mjs && node --check archive.mjs && node --check drive.mjs && node --check backend.mjs && node --check migration.mjs && node --check crypto.mjs && node --check sync.mjs && node --check cloud.mjs && node --check worker/src/index.mjs && node --check worker/src/security.mjs && node --check worker/src/google.mjs && node --check sw.js",
+    "check": "node --check app.js && node --check lib.mjs && node --check db.mjs && node --check archive.mjs && node --check drive.mjs && node --check backend.mjs && node --check migration.mjs && node --check crypto.mjs && node --check sync.mjs && node --check cloud.mjs && node --check worker/src/index.mjs && node --check worker/src/security.mjs && node --check worker/src/google.mjs && node --check sw.js && node --check image-viewer.mjs && node --check ai-launch.mjs && node --check capture-client.mjs && node --check worker/src/capture-images.mjs",
     "worker:dev": "wrangler dev --local",
     "worker:migrate:local": "wrangler d1 migrations apply pocket-archive --local"
   },

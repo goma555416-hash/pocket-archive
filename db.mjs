@@ -1,3 +1,4 @@
+import { recordLocalChanges } from './sync.mjs';
 import { STORAGE_KEY, validatedEntry } from './lib.mjs';
 
 export const DB_NAME = 'pocket-archive';
@@ -132,6 +133,28 @@ export class PocketRepository {
       throw storageError(error);
     }
     return values;
+  }
+
+  async commitCapture(entry, blob, deviceId) {
+    const value = validatedEntry(entry);
+    if (value.kind === 'image' && !blob) throw new Error('缺少原始收件圖片');
+    const tx = this.db.transaction(['entries', 'attachments', 'meta'], 'readwrite');
+    const done = transactionDone(tx); const entriesStore = tx.objectStore('entries'); const meta = tx.objectStore('meta');
+    try {
+      const [rawEntries, rawJournal, rawTombstones, rawReceipts] = await Promise.all([
+        requestResult(entriesStore.getAll()), requestResult(meta.get('sync-journal')), requestResult(meta.get('sync-tombstones')), requestResult(meta.get('capture-receipts'))
+      ]);
+      const entries = rawEntries.map(validatedEntry); const receipts = rawReceipts?.value || [];
+      const duplicate = receipts.includes(value.id) || entries.some(item => item.id === value.id || (value.attachment ? item.attachment?.hash === value.attachment.hash : item.normalizedUrl === value.normalizedUrl));
+      if (!duplicate) {
+        const sync = recordLocalChanges(entries, [value, ...entries], { deviceId, journal: rawJournal?.value || {}, tombstones: rawTombstones?.value || {} });
+        entriesStore.put(sync.entries.find(item => item.id === value.id));
+        if (blob) tx.objectStore('attachments').put({ id: value.attachment.id, blob });
+        meta.put({ key: 'sync-journal', value: sync.journal }); meta.put({ key: 'sync-tombstones', value: sync.tombstones }); meta.put({ key: 'cloud-dirty', value: true });
+      }
+      meta.put({ key: 'capture-receipts', value: [...new Set([value.id, ...receipts])].slice(0, 500) });
+      await done; return duplicate ? 'duplicate' : 'saved';
+    } catch (error) { try { tx.abort(); } catch { /* already aborted */ } await done.catch(() => {}); throw storageError(error); }
   }
 
   async deleteEntry(entry) {

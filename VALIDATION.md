@@ -1,3 +1,56 @@
+# Pocket Archive v2.3 — Issue #10 驗證（2026-10-19）
+
+基線 `main`：`2c2982504b09ce704916e9bb516ddbb12e0d744d`（以 GitHub connector 確認與本機相同）。全部資料為合成／匿名 fixture，未存取 Notion、真實 Drive／D1、Cloudflare Secret 或部署。
+
+## PR #11 審閱修正與可執行驗證（2026-10-19）
+
+已閱讀 review 5567217333 與 Actions run 39203229540／job 117900447897 的真實失敗紀錄：原版在 Chrome 中觀察到 dialog.open=false，但非同步 close 事件尚未清理 src，造成 tests/e2e.mjs「釋放原圖 URL」失敗。
+
+修正：ESC／關閉鈕先同步清除圖片與下載連結並 revoke Object URL；原生 close 仍有清理 fallback，過期 close 事件不清除已重開的 viewer。E2E 保留 src 斷言，另等待 close 生命週期、追蹤原生 revoke 的實際呼叫，驗證同一 Blob URL 關閉前可讀、關閉後 fetch 失敗；覆蓋 ESC、關閉鈕、dialog.close、背景關閉、pagehide 與立即重開。PWA cache 版本更新，讓現有安裝取得修正。
+
+完整 E2E 又發現測試對 AI 套用／復原有錯誤時序假設：完成後收藏會離開收件匣，復原按鈕需先非同步載入快照。已改為等完成後檢查「已整理」與復原後的「收件匣」，並等待復原按鈕可用；沒有跳過、刪除或放寬產品行為驗證。
+
+本次在核准的雲端環境實際執行：
+
+- npm ci：成功，lockfile 未變更。
+- npm test：13 個測試檔及所有模組語法檢查通過。
+- npm run test:security：4 個安全測試檔通過。
+- npm run test:e2e：完整 Chromium 測試通過，含上列實際 Blob URL revoke、完整備份／AI 套用與復原、OAuth popup 手勢、IndexedDB 原子回滾、390px、可及性與離線啟動。
+- npm run test:assets：14 個公開資產成功、15 個匿名私有哨兵路徑皆排除。
+- npx wrangler deploy --dry-run --outdir /tmp/pa-pr11-worker-build：Wrangler 4.151.1 成功，bundle 85.84 KiB／gzip 20.84 KiB；沒有正式部署。
+- git diff --check：通過。
+
+Actions 改成 test（含安全）、e2e、assets、worker_bundle 四個獨立工作；任何一項失敗不再讓其他驗證 skipped。原有 deploy 工作仍排除 pull_request，且須四項全部成功。PR 保持 Draft；真實 iPhone／Windows／Google Drive／Codex raw 原 file ID 交換尚待 UAT。未操作正式 D1、OAuth、Secret、真實收藏或部署。
+
+下列「本機環境限制與 CI」是先前受限執行的歷史紀錄，本節已取代其可執行性狀態；最新遠端結果以 PR #11 的 GitHub Actions 為準。
+
+## 本機已執行
+
+- 基線 `npm test`：12 個測試檔通過，語法檢查通過。
+- v2.3 `npm test`：13 個測試檔通過，含新增模組語法檢查。
+- `node --test --test-isolation=none tests/*.test.mjs`：74 cases，74 pass、0 fail、0 skip（Node 24.19.0；含 SQLite 真實 SQL 整合）。
+- `npm run test:security`：4 個測試檔通過；新增捷徑圖片、格式、完整性、配額、租約版本與清理失敗測試。
+- `node scripts/validate-organized.mjs examples/organized-example.json examples/inbox-example.json`：2 筆匿名結果通過。
+- `git diff --check` 通過。
+
+新增測試涵蓋原始 bytes／檔名／MIME／SHA-256、JPEG/PNG/WebP/GIF/HEIC/HEIF、4 MiB 邊界、逐張多圖、防重、未知長度串流超額、錯誤簽章、無讀取／Drive 權限、跨 Session／過期／舊租約版本、Drive 中斷／已寫入但回應遺失／回讀損毀／共享資料夾拒收、日配額／總量／並行限制、孤兒 ID 清理與撤權失敗保留配額、App 驗證後才 commit/ack、lost ack receipt 冪等、AI 精確批次與原占位檔 fail closed／完整 item ID。
+
+## 本機環境限制與 CI
+
+- `npm run test:e2e` 基線嘗試：本機 socket 不允許，HTTP server 無法啟動（EPERM）；另嘗試純本機檔案＋DevTools pipe，Chromium crashpad 的 setsockopt 亦被 EPERM 阻擋，因此不是產品 E2E 失敗證據。
+- `npm run test:assets`：同樣因 `listen EPERM 127.0.0.1` 未能執行實際 HTTP 檢查。
+- `npm ci`：沙箱網路 `connect EPERM`；擴充權限的自動核准服務多次回覆模型容量不足／逾時，沒有核准執行。
+- `npx --offline wrangler deploy --dry-run`：ENOTCACHED，Wrangler 未安裝，沒有部署。
+- CI workflow 已補上安全測試與 Google Chrome E2E，保留實際 Static Assets 與 Wrangler dry-run；GitHub 寫入工具的自動核准審查服務同樣回覆「Selected model is at capacity」，尚未建立遠端 tree／branch／PR，因此本次沒有 CI 結果。完整變更與可直接使用的 PR 說明已保存本機。
+
+E2E 已擴充直幅完整 contain、原始尺寸、放大、ESC、焦點還原、Object URL 清理、真實 IndexedDB 收件 receipt／附件原子交易，並保留既有 ZIP、AI、390px、離線／Service Worker 回歸。可執行腳本不代表已通過，請以本次 CI 結果為準。
+
+## 仍需本人最後驗收
+
+真實 iPhone Safari／主畫面 PWA、Apple Shortcuts 分享原檔行為、Google Drive grant/配額與 Windows 實機均未宣稱通過。合併後核准一次 migration 0004／部署與 cron、更新原捷徑，再執行 [UAT-V2.3.md](./UAT-V2.3.md)（10–15 分鐘）。不改 Secret、OAuth callback、Client 或金鑰。完整限制、安全／成本與回滾見 [CAPTURE-IMAGES.md](./CAPTURE-IMAGES.md)。
+
+---
+
 # Pocket Archive v2.2 — 驗證紀錄（2026-10-18）
 
 ## Cloudflare 正式環境部署前設定

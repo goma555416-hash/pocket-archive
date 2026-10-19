@@ -26,10 +26,45 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - run: npm run test:security
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Browser regression
+        run: npm run test:e2e
+        env:
+          CHROMIUM_PATH: /usr/bin/google-chrome
+
+  assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
       - name: Validate Static Assets exclusions
         run: npm run test:assets
         env:
           XDG_CONFIG_HOME: /tmp/pocket-archive-assets-config
+
+  worker_bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
       - name: Validate Cloudflare Worker bundle
         run: npx wrangler deploy --dry-run --outdir /tmp/pocket-archive-worker-build
         env:
@@ -37,7 +72,7 @@ jobs:
 
   deploy:
     if: github.event_name != 'pull_request'
-    needs: test
+    needs: [test, e2e, assets, worker_bundle]
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

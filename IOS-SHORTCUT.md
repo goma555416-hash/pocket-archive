@@ -58,3 +58,49 @@ iOS 版本間的動作翻譯可能略有不同。本專案不產生無法驗證�
 ## 純 GitHub Pages 回滾模式
 
 如果尚未部署 Worker，捷徑只能使用 v2.1.3 安全流程：分享 → 複製 URL → 開啟 Pocket Archive →「讀取剪貼簿並預覽」。純靜態網站無法讓其他 App 在背景寫入它的 IndexedDB，也不能安全保存 Refresh Token。不要以 GET query 取代收件 API。
+
+## v2.3：把同一個捷徑擴充為圖片／網址共用入口
+
+先複製現有 **存到 Pocket Archive** 為 **存到 Pocket Archive（URL 回滾）**，停用副本的分享表單但保留全部原動作。修改原捷徑，名稱與原憑證不變，不需取得 Google Token。接收類型增加 **影像、檔案**（保留 URL、文字）。不要使用調整大小、轉換影像或重新編碼動作。
+
+照片來源 App／iOS 可能先產生分享版本；在照片分享選項選「目前格式／Current」與原始資料（版本提供時），若必須確保相機原始 HEIC，先將**原始檔**存入「檔案」再分享。Pocket Archive 保證收到的 bytes 原樣保存，不能還原 iOS 已在分享前轉換的資料。原圖可能包含 Exif／GPS。
+
+**限制：分享 API 每張最多 4 MiB，逐張上傳；每日全帳號 50 MiB／100 次新工作、未清理暫存 100 MiB、每憑證 30 requests/min。App 直接選圖仍可 25 MB。** 不要把圖片壓縮後假稱保留原圖；超額請改在 App 選取原檔。
+
+在原「從捷徑輸入取得 URL」動作前加入分支：
+
+1. 使用「重複每個項目」（Repeat with Each）處理捷徑輸入，保留每個 Repeat Item。
+2. 「取得輸入中的檔案／Get Files from Input」以 Repeat Item 為輸入。用「取得檔案詳細資訊／Get Details of Files」取得 **副檔名、名稱、檔案大小**。若來源是影像、可取得檔案且副檔名在下列白名單，進圖片分支；非圖片才進原 URL 分支。檔案本身作為 body，不用「取得影像」轉換原圖。來源未提供實際檔案時提示「請先存為原始檔再分享」，不可送空檔或假 URL。
+3. 將副檔名轉小寫，用「字典」映射 MIME：`jpg/jpeg → image/jpeg`、`png → image/png`、`webp → image/webp`、`gif → image/gif`、`heic → image/heic`、`heif → image/heif`。這只是宣告，Worker 仍驗證簽章。其他類型提示不支援，不修改副檔名。
+4. 若檔案大小大於 **4194304** bytes，將「名稱：未收件，超過 4 MiB，請在 App 選原圖」加入結果清單；略過此張繼續下一張。
+5. 「產生 UUID」，存入本張變數 `UploadUUID`。用「URL 編碼／URL Encode」對完整檔名 UTF-8 percent encode，存入 `EncodedName`。
+6. 「取得 URL 內容／Get Contents of URL」：
+   - URL：`https://你的正式網域/api/capture/images`
+   - Method：`POST`
+   - Request Body：**File／檔案**，選原始檔案變數，不是 JSON／Form，也不是 base64。
+   - Headers：`Authorization: Bearer <既有 pa_capture_... 憑證>`、`Idempotency-Key: <UploadUUID>`、`Content-Type: <字典映射的 MIME>`、`X-PA-Filename: <EncodedName>`。
+   - 不手動設定 Content-Length；iOS 可設定或省略，伺服器會逐段計數。
+7. 取得回應 Dictionary 的 `status`，將逐項結果加入「結果清單」：
+   - `accepted`：「名稱：原圖已安全收件；請開 App 入庫及同步」。
+   - `duplicate`：「名稱：已收過，未重複新增」。
+   - 其他／沒有 status：「名稱：尚未收件」，可追加 error.code，**不要**追加 token、URL、原圖或完整 request。
+8. 非圖片的 Repeat Item 執行原有 URL/文字流程：從此項取得 URL；無值通知「分享內容沒有可辨識網址」；有值則以原 JSON/header 呼叫 `/api/capture`。保留已驗證四結果：accepted、duplicate、無有效 URL、離線失敗。多圖時不要把第一張照片的標題當作每一筆的 URL。
+9. 重複結束，以「合併文字」換行顯示逐張結果（長清單用「顯示結果」），不要只顯示籠統成功。可加「開啟 URL」至 App 首頁，**不帶 query 圖片或憑證**。App 下次在前景下載、驗 hash、原子寫入，接著同步至 Windows。
+
+iOS Shortcuts 的網路動作若拋出系統錯誤，原生捷徑沒有通用的 try/catch：它可能立即停止其餘迴圈並顯示系統離線／逾時錯誤，這代表本次沒有確認成功，不應有預先顯示的成功通知。已回傳 accepted 的項目仍已安全收件；重跑整批由 hash 去重。若重試同一個網路動作且保留 UploadUUID，可沿用 UUID；整個捷徑重跑會生成新 UUID，由 hash 再次防重複。
+
+### 圖片錯誤與恢復
+
+| HTTP／code | 顯示與處理 |
+| --- | --- |
+| 401 shortcut_expired | 未收件；撤銷舊捷徑憑證並重新配對 |
+| 401 reauth_required | 未收件；在 App 重新 Google 登入，捷徑本身不能取得 grant |
+| 413 image_too_large | 未收件；超過 4 MiB，請在 App 直接選原檔 |
+| 415 invalid_image_type / image_signature_mismatch | 未收件；MIME 與實際格式不符，不改副檔名硬送 |
+| 409 upload_busy / upload_in_progress | 另一張處理中；等待再逐張送出 |
+| 409 upload_retry_new_key | 上次失敗，重跑產生新 UUID；不代表舊工作已成功 |
+| 409 capture_folder_shared | 未收件；擁有者檢查專用 private 暫存資料夾分享權限 |
+| 429 rate_limited / capture_quota | 未收件；分鐘限流稍後重試，日配額等待下一個滑動 24 小時／清理完成 |
+| 4xx/5xx、空回應、離線、逾時 | 尚未確認收件；保留原檔並重試，不能通知已儲存 |
+
+Worker 將未完成上傳在 10 分鐘後列入回收，待 App 收件保留 7 天，App 確認後暫存再留 24 小時；自動回收遇撤權／Google 錯誤會延後。配額與保留完整規則見 CAPTURE-IMAGES.md。沒有 Worker 的 Pages 回滾模式，圖片仍須在 App 點「圖片」選取，不能用背景捷徑收圖。

@@ -72,3 +72,7 @@ Drive 流程的 schema 完全相同。為兼容不同 OAuth Client 的 `drive.fi
 - CLI validator 對正式工作流要求輸入與輸出 ID 完整一對一；App 則支援部分結果，讓錯誤項目不阻塞合法項目。
 - 匯出前應人工檢查私人網址、token、備註及圖片；匯出檔已由 `.gitignore` 排除，但仍不可提交 GitHub。
 - Codex Cloud 只有在使用者主動選擇上傳時才會取得檔案；優先使用本機 CLI。
+
+## v2.3 啟動與批次範圍
+
+Drive 送出後顯示一鍵複製的 export_id 專用指令，不包含私人 URL／token／匯出內容；禁止 Notion／其他私人資料來源。App 保存 itemIds 並要求 Drive 結果 ID 完整一對一，原 file ID 的 parent、檔名、appProperties 與內容 export_id 必須匹配；舊工作缺 itemIds 時只從原 AI-Inbox 下載復原。缺失／不匹配／重複占位檔 fail closed。離線手動匯入仍保留既有部分結果預覽能力。

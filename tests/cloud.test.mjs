@@ -161,3 +161,42 @@ test('模擬 iPhone/Windows 經 Drive journal 與附件做雙向增量同步', a
   assert.equal(receivedA.entries[0].title, 'Windows 已編輯'); assert.equal(receivedA.conflicts.length, 0);
   assert.equal([...files.values()].filter(file => file.appProperties?.paRole === 'syncAttachment').length, 1, '附件依 SHA-256 去重');
 });
+
+test('AI 啟動指令指定批次與儲存庫、禁止 Notion，拒絕錯誤入口資料', async () => {
+  const { codexLaunchCommand } = await import('../ai-launch.mjs');
+  const command = codexLaunchCommand('export-anonymous-test');
+  for (const text of ['goma555416-hash/pocket-archive', 'AGENTS.md', 'AI-BATCH-SPEC.md', 'CODEX-DRIVE-WORKFLOW.md', 'CODEX-ORGANIZE-PROMPT.md', 'Pocket Archive/AI-Inbox', 'Pocket Archive/AI-Results', '禁止搜尋 Notion', 'fail closed', '原 file ID', 'export-anonymous-test']) assert.ok(command.includes(text), text);
+  assert.doesNotMatch(command, /https?:|Bearer|pa_capture_/);
+  assert.throws(() => codexLaunchCommand('https://private.example.test/?token=secret'), /無效/);
+});
+
+test('AI 結果原檔與完整 ID 驗證 fail closed，重複批次不能另建占位檔', async () => {
+  const entry = validatedEntry({ id: 'ai-scoped', url: 'https://example.test/anonymous' }); const exportId = 'export-anonymous';
+  const workspace = { aiInbox: 'inbox', aiResults: 'results' }; let creates = 0;
+  let file = { id: 'result-file', name: `organized-${exportId}.json`, parents: ['results'], appProperties: { paRole: 'aiResult', exportId, inboxFileId: 'inbox-file' } };
+  let raw = { format: 'pocket-archive-organized', schema_version: 2, source_export_id: exportId, status: 'pending', items: [] };
+  const drive = { getFile: async () => file, downloadFile: async () => new Blob([JSON.stringify(raw)]), createFile: async () => { creates++; }, listFiles: async () => ({ files: [] }) };
+  const exchange = new CloudAiExchange(drive, workspace); const job = { exportId, inboxFileId: 'inbox-file', resultFileId: 'result-file', itemIds: [entry.id] };
+  assert.equal((await exchange.readResult(job, [entry], [exportId])).pending, true);
+  raw.source_export_id = 'export-wrong'; await assert.rejects(() => exchange.readResult(job, [entry], [exportId]), /不匹配/); raw.source_export_id = exportId;
+  file.parents = ['wrong-folder']; await assert.rejects(() => exchange.readResult(job, [entry], [exportId]), /原檔不匹配/); file.parents = ['results'];
+  await assert.rejects(() => exchange.readResult({ ...job, resultFileId: null }, [entry], [exportId]), /缺失/);
+  delete raw.status; await assert.rejects(() => exchange.readResult(job, [entry], [exportId]), /完整一對一/);
+  raw.items = [{ id: entry.id, analysis_status: 'insufficient_data', suggested_categories: [], suggested_tags: [], summary: '', reason: '未取得內容', confidence: 'low' }];
+  assert.equal((await exchange.readResult(job, [entry], [exportId])).result.accepted.length, 1);
+  raw.items.push({ ...raw.items[0] }); await assert.rejects(() => exchange.readResult(job, [entry], [exportId]), /完整一對一/);
+  raw.items = [{ ...raw.items[0], id: 'another-valid-local-item' }]; await assert.rejects(() => exchange.readResult(job, [entry], [exportId]), /完整一對一/);
+  const { sha256 } = await import('../lib.mjs'); const jobKey = await sha256(new TextEncoder().encode(`${entry.id}:${entry.updatedAt}`));
+  drive.listFiles = async () => ({ files: [{ id: 'inbox-file', appProperties: { jobKey, exportId } }] });
+  await assert.rejects(() => exchange.enqueue([entry], {}), /占位檔缺失/); assert.equal(creates, 0);
+});
+
+
+test('AI 檢查保持畫面所選批次，不因重複送出跳到另一個待處理批次', async () => {
+  const { cloudAiJobForReview } = await import('../ai-launch.mjs');
+  const jobs = [{ exportId: 'export-new', status: 'pending' }, { exportId: 'export-old', status: 'ready' }, { exportId: 'export-applied', status: 'applied' }];
+  assert.equal(cloudAiJobForReview(jobs, 'export-old').exportId, 'export-old');
+  assert.equal(cloudAiJobForReview(jobs, 'export-applied').status, 'applied');
+  assert.throws(() => cloudAiJobForReview(jobs, 'export-missing'), /不改選/);
+  assert.equal(cloudAiJobForReview(jobs).exportId, 'export-new');
+});

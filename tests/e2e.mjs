@@ -49,7 +49,7 @@ try {
   profile = await mkdtemp(join(tmpdir(), 'pocket-archive-e2e-'));
   server = spawn('python', ['-m', 'http.server', '4173', '--bind', '127.0.0.1'], { cwd: new URL('..', import.meta.url).pathname, stdio: 'ignore' });
   await waitFor(async () => (await fetch(HOST)).ok, '本機 HTTP 伺服器');
-  browser = spawn('/usr/bin/chromium', ['--headless=new', '--no-sandbox', '--disable-gpu', '--remote-debugging-port=9223', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore' });
+  browser = spawn(process.env.CHROMIUM_PATH || '/usr/bin/chromium', ['--headless=new', '--no-sandbox', '--disable-gpu', '--remote-debugging-port=9223', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore' });
   const version = await waitFor(async () => { const response = await fetch(`${DEBUG}/json/version`); return response.ok && response.json(); }, 'Chromium DevTools');
   assert.ok(version.Browser.includes('Chrome'));
   const target = await fetch(`${DEBUG}/json/new?about:blank`, { method: 'PUT' }).then(response => response.json());
@@ -94,13 +94,89 @@ try {
 
   await cdp.evaluate(`(() => {
     document.querySelector('#image-button').click();
-    const file=new File([new Uint8Array([137,80,78,71,13,10,26,10])],'tiny.png',{type:'image/png'}); const transfer=new DataTransfer(); transfer.items.add(file); const input=document.querySelector('#image-files'); input.files=transfer.files; input.dispatchEvent(new Event('change',{bubbles:true}));
+    const canvas=document.createElement('canvas'); canvas.width=100; canvas.height=600; canvas.getContext('2d').fillRect(0,0,100,600); const bytes=Uint8Array.from(atob(canvas.toDataURL('image/png').split(',')[1]),c=>c.charCodeAt(0)); const file=new File([bytes],'tiny.png',{type:'image/png'}); const transfer=new DataTransfer(); transfer.items.add(file); const input=document.querySelector('#image-files'); input.files=transfer.files; input.dispatchEvent(new Event('change',{bubbles:true}));
   })()`);
   await waitFor(() => cdp.evaluate("document.querySelector('#image-preview').textContent.includes('1 張可加入')"), '圖片 hash 預覽');
   await cdp.evaluate("document.querySelector('#image-form').requestSubmit()");
   await waitFor(() => cdp.evaluate("document.querySelectorAll('.item-card').length === 5"), '圖片 IndexedDB 儲存');
   process.stdout.write('E2E：新增、批次與圖片通過\n');
   assert.equal(await cdp.evaluate("document.querySelectorAll('[data-attachment-id]').length"), 1);
+
+  async function auditViewerUrl() {
+    await cdp.evaluate(`(() => {
+      const dialog=document.querySelector('#image-viewer');
+      window.__viewerBlobUrl=dialog.querySelector('img').src;
+      window.__viewerCloseObserved=false; window.__viewerRevocations=[];
+      dialog.addEventListener('close',()=>{window.__viewerCloseObserved=true;},{once:true});
+      const revoke=URL.revokeObjectURL;
+      window.__restoreViewerRevoke=()=>{URL.revokeObjectURL=revoke;};
+      URL.revokeObjectURL=value=>{revoke.call(URL,value);window.__viewerRevocations.push(value);};
+    })()`);
+    assert.equal(await cdp.evaluate("fetch(window.__viewerBlobUrl).then(response=>response.ok)"), true, '關閉前原圖 Blob URL 可讀取');
+  }
+  async function assertViewerReleased(label) {
+    // open=false precedes the native close event; wait for the resource lifecycle too.
+    await waitFor(() => cdp.evaluate("!document.querySelector('#image-viewer').open && window.__viewerCloseObserved && !document.querySelector('#image-viewer img').hasAttribute('src')"), label);
+    assert.equal(await cdp.evaluate("document.querySelector('#image-viewer img').hasAttribute('src')"), false, '釋放原圖 URL');
+    assert.equal(await cdp.evaluate("document.querySelector('#image-viewer a').hasAttribute('href')"), false, '清除原圖下載 URL');
+    assert.equal(await cdp.evaluate("window.__viewerRevocations.filter(url=>url===window.__viewerBlobUrl).length"), 1, '原圖 URL 實際 revoke 一次');
+    assert.equal(await cdp.evaluate("fetch(window.__viewerBlobUrl).then(()=>false,()=>true)"), true, 'revoke 後原圖 Blob URL 無法再讀取');
+    await cdp.evaluate("window.__restoreViewerRevoke()");
+  }
+  async function openOriginalViewer() {
+    await cdp.evaluate("(() => { const trigger=document.querySelector('[data-view-image]');trigger.focus();trigger.click(); })()");
+    await waitFor(() => cdp.evaluate("document.querySelector('#image-viewer').open && document.querySelector('#viewer-status').textContent.includes('100 × 600')"), '原圖重新開啟');
+  }
+
+  await cdp.evaluate(`(() => { const button=document.querySelector('[data-view-image]'); button.focus(); button.click(); })()`);
+  await waitFor(() => cdp.evaluate("document.querySelector('#viewer-status').textContent.includes('100 × 600')"), '原始圖片尺寸');
+  assert.equal(await cdp.evaluate("getComputedStyle(document.querySelector('.original-preview img')).objectFit"), 'contain');
+  assert.equal(await cdp.evaluate("document.querySelector('#image-viewer a').download"), 'tiny.png');
+  const beforeZoom = await cdp.evaluate("document.querySelector('#image-viewer img').width");
+  await cdp.evaluate("document.querySelector('[data-zoom=in]').click()");
+  assert.ok(await cdp.evaluate("document.querySelector('#image-viewer img').width") > beforeZoom);
+  assert.equal(await cdp.evaluate("document.activeElement.closest('#image-viewer') !== null"), true);
+  await auditViewerUrl();
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await assertViewerReleased('ESC 關閉並釋放原圖');
+  assert.equal(await cdp.evaluate("document.activeElement.matches('[data-view-image]')"), true, '還原圖片按鈕焦點');
+  await openOriginalViewer(); await auditViewerUrl();
+  await cdp.evaluate("document.querySelector('[data-viewer-close]').click()");
+  await assertViewerReleased('關閉鈕釋放原圖');
+  await openOriginalViewer(); await auditViewerUrl();
+  await cdp.evaluate("document.querySelector('#image-viewer').close()");
+  await assertViewerReleased('原生 dialog.close 釋放原圖');
+  await openOriginalViewer(); await auditViewerUrl();
+  await cdp.evaluate("document.querySelector('#image-viewer').click()");
+  await assertViewerReleased('背景關閉釋放原圖');
+
+  await openOriginalViewer();
+  await cdp.evaluate(`(() => {
+    const dialog=document.querySelector('#image-viewer');window.__previousViewerUrl=dialog.querySelector('img').src;
+    window.__previousCloseObserved=false;dialog.addEventListener('close',()=>{window.__previousCloseObserved=true;},{once:true});
+    dialog.close();document.querySelector('[data-view-image]').click();
+  })()`);
+  await waitFor(() => cdp.evaluate("window.__previousCloseObserved && document.querySelector('#image-viewer').open && !document.querySelector('#image-viewer img').hidden"), '舊 close 事件不清除重新開啟的原圖');
+  assert.equal(await cdp.evaluate("fetch(document.querySelector('#image-viewer img').src).then(response=>response.ok)"), true, '重開的原圖 URL 仍可使用');
+  assert.equal(await cdp.evaluate("fetch(window.__previousViewerUrl).then(()=>false,()=>true)"), true, '前一張原圖 URL 已釋放');
+  await auditViewerUrl();
+  await cdp.evaluate("window.dispatchEvent(new PageTransitionEvent('pagehide'))");
+  await assertViewerReleased('離開頁面釋放原圖');
+  await cdp.evaluate("window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true}))");
+  const atomicCapture = await cdp.evaluate(`(async () => {
+    const { initRepository } = await import('./db.mjs'); const { sha256, createCaptureEntry } = await import('./lib.mjs');
+    const { repository } = await initRepository(); const entry=(await repository.listEntries()).find(e=>e.attachment); const blob=await repository.getAttachment(entry.attachment.id);
+    const oldJournal=await repository.getMeta('sync-journal',{}); const oldReceipts=await repository.getMeta('capture-receipts',[]);
+    const captured=createCaptureEntry({id:'capture-atomic-e2e',kind:'image',attachment:{...entry.attachment,id:'att-capture-e2e'},createdAt:Date.now()});
+    // A different hash exercises an actual atomic write; second call must reuse the receipt.
+    captured.attachment.hash='a'.repeat(64);
+    const first=await repository.commitCapture(captured,blob,'e2e'); const second=await repository.commitCapture(captured,blob,'e2e');
+    const saved=await repository.getAttachment(captured.attachment.id); const receipt=await repository.getMeta('capture-receipts');
+    await repository.deleteEntry(captured); await repository.setMeta('sync-journal',oldJournal); await repository.setMeta('capture-receipts',oldReceipts); return {first,second,receipt:receipt.includes(captured.id),hash:await sha256(saved),original:await sha256(blob)};
+  })()`);
+  assert.deepEqual(atomicCapture, {first:'saved',second:'duplicate',receipt:true,hash:atomicCapture.original,original:atomicCapture.original});
+  process.stdout.write('E2E：完整圖片、原圖縮放、ESC、焦點、原子收件與冪等紀錄通過\n');
 
   await cdp.evaluate(`(() => { const input=document.querySelector('#search-input'); input.value='測試分類 自動化'; input.dispatchEvent(new Event('input',{bubbles:true})); })()`);
   assert.equal(await cdp.evaluate("document.querySelectorAll('.item-card').length"), 1, '搜尋跨分類與標籤');
@@ -136,9 +212,16 @@ try {
   await cdp.evaluate(`(() => { const file=new File([${JSON.stringify(organized)}],'organized.json',{type:'application/json'}); const transfer=new DataTransfer(); transfer.items.add(file); const input=document.querySelector('#organized-file'); input.files=transfer.files; input.dispatchEvent(new Event('change',{bubbles:true})); })()`);
   await waitFor(() => cdp.evaluate("!document.querySelector('#apply-ai').hidden"), 'Codex 差異預覽');
   await cdp.evaluate("document.querySelector('#apply-ai').click()");
-  await waitFor(() => cdp.evaluate("document.body.textContent.includes('依可見測試內容產生的摘要')"), 'Codex 套用');
-  await cdp.evaluate("window.confirm=()=>true; document.querySelector('#backup-button').click(); document.querySelector('#undo-ai').click()");
-  await waitFor(() => cdp.evaluate("!document.body.textContent.includes('依可見測試內容產生的摘要')"), 'Codex 單次復原');
+  await waitFor(() => cdp.evaluate("!document.querySelector('#ai-dialog').open"), 'Codex 套用完成');
+  await cdp.evaluate("document.querySelector('[data-view=saved]').click()");
+  await waitFor(() => cdp.evaluate("document.querySelector('.ai-summary')?.textContent.includes('依可見測試內容產生的摘要')"), 'Codex 套用至已整理收藏');
+  await cdp.evaluate("window.confirm=()=>true; document.querySelector('#backup-button').click()");
+  await waitFor(() => cdp.evaluate("!document.querySelector('#undo-ai').disabled"), 'Codex 復原快照已讀取');
+  await cdp.evaluate("document.querySelector('#undo-ai').click()");
+  await waitFor(() => cdp.evaluate("!document.querySelector('.ai-summary')"), 'Codex 單次復原');
+  await cdp.evaluate("document.querySelector('[data-view=inbox]').click()");
+  await waitFor(() => cdp.evaluate("[...document.querySelectorAll('.card-title')].some(node=>node.textContent.includes('還原收藏'))"), '復原後回到收件匣');
+  assert.equal(await cdp.evaluate("document.querySelectorAll('.ai-summary').length"), 0, '復原後原始收藏沒有 AI 摘要');
   process.stdout.write('E2E：Codex 預覽、套用與復原通過\n');
 
   await cdp.evaluate(`(() => {
