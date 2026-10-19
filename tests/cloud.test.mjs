@@ -156,7 +156,7 @@ test('AI App preflight verifies full appProperties, unique file IDs, hashes and 
   assert.ok(command.includes(proof.inboxSha256));
   assert.ok(command.includes(proof.resultFileId));
   assert.ok(command.includes('appProperties'));
-  assert.doesNotMatch(command, /https?:\\/\\//);
+  assert.equal(command.includes('https://') || command.includes('http://'), false);
   assert.throws(() => codexLaunchCommand(job.exportId, { ...proof, resultFileId: 'unsafe\\nheader' }), /證據格式無效/);
 
   const inbox = files.get(request.inboxFileId), result = files.get(request.resultFileId);
