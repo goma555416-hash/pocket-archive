@@ -128,6 +128,51 @@ test('AI 交換區預先建立結果檔並避免重複工作', async () => {
   assert.equal(updates[0].value.appProperties.resultFileId, 'file-2');
 });
 
+test('AI App preflight verifies full appProperties, unique file IDs, hashes and scope', async () => {
+  const { codexLaunchCommand } = await import('../ai-launch.mjs');
+  const entry = createEntry({ id: 'test-entry', url: 'https://example.org/anonymous' });
+  const files = new Map(); let sequence = 0;
+  const drive = {
+    async listFiles({ parentId, name }) {
+      return { files: [...files.values()].filter(file => file.parents.includes(parentId) && (!name || file.name === name)) };
+    },
+    async createFile(value) {
+      const file = { id: 'file-' + (++sequence), name: value.name, parents: [value.parentId],
+        mimeType: value.mimeType, appProperties: value.appProperties, blob: value.blob };
+      files.set(file.id, file); return file;
+    },
+    async updateMetadata(id, value) { Object.assign(files.get(id).appProperties, value.appProperties); },
+    async getFile(id) { return files.get(id); },
+    async downloadFile(id) { return files.get(id).blob; }
+  };
+  const exchange = new CloudAiExchange(drive, { aiInbox: 'folder-inbox', aiResults: 'folder-results' });
+  const job = await exchange.enqueue([entry], { getAttachment: async () => null });
+  const request = { exportId: job.exportId, inboxFileId: job.inboxFile.id, resultFileId: job.resultFile.id, itemIds: job.itemIds };
+  const proof = await exchange.launchEvidence(request);
+  assert.equal(proof.inboxFileId, request.inboxFileId);
+  assert.equal(proof.resultFileId, request.resultFileId);
+  assert.match(proof.inboxSha256, /^[a-f0-9]{64}$/);
+  const command = codexLaunchCommand(job.exportId, proof);
+  assert.ok(command.includes(proof.inboxSha256));
+  assert.ok(command.includes(proof.resultFileId));
+  assert.ok(command.includes('appProperties'));
+  assert.doesNotMatch(command, /https?:\\/\\//);
+  assert.throws(() => codexLaunchCommand(job.exportId, { ...proof, resultFileId: 'unsafe\\nheader' }), /證據格式無效/);
+
+  const inbox = files.get(request.inboxFileId), result = files.get(request.resultFileId);
+  delete inbox.appProperties.resultFileId;
+  await assert.rejects(() => exchange.launchEvidence(request), /metadata/);
+  inbox.appProperties.resultFileId = result.id;
+
+  const extra = { ...result, id: 'file-duplicate' }; files.set(extra.id, extra);
+  await assert.rejects(() => exchange.launchEvidence(request), /不唯一/);
+  files.delete(extra.id);
+
+  await assert.rejects(() => exchange.launchEvidence({ ...request, itemIds: ['unknown'] }), /item ID/);
+  result.blob = new Blob([JSON.stringify({ format: 'pocket-archive-organized', schema_version: 2, source_export_id: job.exportId, status: 'completed', items: [] })], { type: 'application/json' });
+  await assert.rejects(() => exchange.launchEvidence(request), /未處理占位檔/);
+});
+
 test('模擬 iPhone/Windows 經 Drive journal 與附件做雙向增量同步', async () => {
   const files = new Map(); let sequence = 0;
   const drive = {
