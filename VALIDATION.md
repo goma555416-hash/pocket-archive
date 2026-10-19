@@ -6,7 +6,7 @@
 
 - 基線 `npm test`：12 個測試檔通過，語法檢查通過。
 - v2.3 `npm test`：13 個測試檔通過，含新增模組語法檢查。
-- `node --test --test-isolation=none tests/*.test.mjs`：72 cases，72 pass、0 fail、0 skip（Node 24.19.0；含 SQLite 真實 SQL 整合）。
+- `node --test --test-isolation=none tests/*.test.mjs`：73 cases，73 pass、0 fail、0 skip（Node 24.19.0；含 SQLite 真實 SQL 整合）。
 - `npm run test:security`：4 個測試檔通過；新增捷徑圖片、格式、完整性、配額、租約版本與清理失敗測試。
 - `node scripts/validate-organized.mjs examples/organized-example.json examples/inbox-example.json`：2 筆匿名結果通過。
 - `git diff --check` 通過。
@@ -15,11 +15,11 @@
 
 ## 本機環境限制與 CI
 
-- `npm run test:e2e` 基線嘗試：本機 socket 不允許，HTTP server 無法啟動（EPERM），因此不是產品 E2E 失敗證據。
+- `npm run test:e2e` 基線嘗試：本機 socket 不允許，HTTP server 無法啟動（EPERM）；另嘗試純本機檔案＋DevTools pipe，Chromium crashpad 的 setsockopt 亦被 EPERM 阻擋，因此不是產品 E2E 失敗證據。
 - `npm run test:assets`：同樣因 `listen EPERM 127.0.0.1` 未能執行實際 HTTP 檢查。
 - `npm ci`：沙箱網路 `connect EPERM`；擴充權限的自動核准服務多次回覆模型容量不足／逾時，沒有核准執行。
 - `npx --offline wrangler deploy --dry-run`：ENOTCACHED，Wrangler 未安裝，沒有部署。
-- PR CI 已補上安全測試與 Google Chrome E2E，保留實際 Static Assets 與 Wrangler dry-run；CI 實際結果將在 PR 更新。
+- CI workflow 已補上安全測試與 Google Chrome E2E，保留實際 Static Assets 與 Wrangler dry-run；GitHub 寫入工具的自動核准審查服務同樣回覆「Selected model is at capacity」，尚未建立遠端 tree／branch／PR，因此本次沒有 CI 結果。完整變更與可直接使用的 PR 說明已保存本機。
 
 E2E 已擴充直幅完整 contain、原始尺寸、放大、ESC、焦點還原、Object URL 清理、真實 IndexedDB 收件 receipt／附件原子交易，並保留既有 ZIP、AI、390px、離線／Service Worker 回歸。可執行腳本不代表已通過，請以本次 CI 結果為準。
 

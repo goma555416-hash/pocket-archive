@@ -403,7 +403,8 @@ async function submitCapture(request, env) {
 }
 
 function captureImages(env) {
-  return imageCaptureService({ env, now: () => nowMs(env), driveFetch: (session, target, options) => googleDriveFetch(null, env, session, target, options) });
+  const boundedEnv = { ...env, __fetch: (input, options = {}) => fetcher(env)(input, { ...options, signal: options.signal || AbortSignal.timeout(20_000) }) };
+  return imageCaptureService({ env, now: () => nowMs(env), driveFetch: (session, target, options) => googleDriveFetch(null, boundedEnv, session, target, options) });
 }
 
 async function submitImageCapture(request, env) {

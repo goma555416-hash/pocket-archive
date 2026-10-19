@@ -6,7 +6,7 @@
 
 沿用已授權的 Google `drive.file`，不新增帳號、Object Storage、付費 API 或模型。Worker 不接受捷徑選擇任何 Drive ID／parent／query；不把 Google Token、暫存 Drive ID 或原檔內容交給捷徑。D1 只有小型 metadata、配額、狀態與稽核，圖片不進 D1、日誌、query 或 Static Assets。
 
-為避免 Worker 128 MiB 記憶體與小型簡易上傳限制，**分享 API 每張 4 MiB（4,194,304 bytes）**，而非 25 MB；App 本機選取維持 25 MiB。raw body 逐段計數，最多緩衝 4 MiB，不信任 Content-Length；單段讀取 15 秒逾時，Google 操作 20 秒逾時。全帳號同時只能一個圖片接收工作（D1 partial unique index），多圖須逐張傳送。
+為避免 Worker 128 MiB 記憶體與小型簡易上傳限制，**分享 API 每張 4 MiB（4,194,304 bytes）**，而非 25 MB；App 本機選取維持 25 MiB。raw body 逐段計數，最多緩衝 4 MiB，不信任 Content-Length；單段讀取 15 秒、整份 body 30 秒逾時，Google 操作 20 秒逾時。全帳號同時只能一個圖片接收工作（D1 partial unique index），多圖須逐張傳送。
 
 - 每憑證原有 30 requests/min，含重試／拒收。
 - 全擁有者每日 50 MiB、100 次 upload reservation；每個新工作先預留 4 MiB，驗證後記實際大小，失敗也計入當日預留以防濫用。
@@ -28,7 +28,7 @@ ack 後仍需 App 在前景完成既有 Drive journal/附件同步；App 關閉�
 
 ## 保留與回收
 
-新增 cron 每 15 分鐘執行，每次最多 3 筆，以控制免費層 subrequest 預算。未完成 upload intent 最多 10 分鐘；ready 工作 7 天；ack 後暫存原檔再留 24 小時。回收只操作 D1 已知 file ID 且 Drive appProperties 的 `paRole=captureImage`、`uploadId` 同時匹配的檔案，移至 Drive 垃圾桶，不永久刪除。404 視為已清理。Google 撤權／空間或連線錯誤時保留 ID 與配額，下次重試；不讀取其他 Drive 檔案。清理後抹除檔名、最小 metadata 留 30 天；失敗會延後實際保留期限，須監控 cron。
+新增 cron 每 15 分鐘執行，每次最多 3 筆，以控制免費層 subrequest 預算。未完成 upload intent 最多 10 分鐘；ready 工作 7 天；ack 後暫存原檔再留 24 小時。回收只操作 D1 已知 file ID 且 Drive appProperties 的 `paRole=captureImage`、`uploadId` 同時匹配的檔案，移至 Drive 垃圾桶，不永久刪除。不確定建立結果的 404 先隔離至 intent 建立後 15 分鐘，再視為已清理，避免過早釋放配額。Google 撤權／空間或連線錯誤時保留 ID 與配額，下次重試；不讀取其他 Drive 檔案。清理後抹除檔名、最小 metadata 留 30 天；失敗會延後實際保留期限，須監控 cron。
 
 Drive 垃圾桶仍可能占使用者空間；由擁有者自行管理，App 不自動清空。受限憑證仍可能被偷走並用來耗用收件額度，請個別撤銷遺失裝置；沒有升級成任意 Drive 權限。
 

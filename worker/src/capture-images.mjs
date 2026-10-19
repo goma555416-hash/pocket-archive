@@ -7,13 +7,14 @@ const DAY = 86_400_000; const DAILY_BYTES = 50 * 1024 * 1024; const PENDING_BYTE
 const API = 'https://www.googleapis.com/drive/v3'; const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
 function fail(status, code, message) { throw Object.assign(new Error(message), { status, code }); }
 
-export async function boundedBytes(body, limit = CAPTURE_IMAGE_LIMIT) {
+export async function boundedBytes(body, limit = CAPTURE_IMAGE_LIMIT, timeoutMs = 30_000) {
   if (!body) fail(400, 'empty_image', '沒有圖片內容');
-  const reader = body.getReader(); const chunks = []; let size = 0;
+  const reader = body.getReader(); const chunks = []; let size = 0; const deadline = Date.now() + timeoutMs;
   try {
     while (true) {
+      if (Date.now() >= deadline) fail(408, 'image_timeout', '圖片傳輸逾時，尚未收件');
       let timer; let part;
-      try { part = await Promise.race([reader.read(), new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error('圖片傳輸逾時，尚未收件'), { status: 408, code: 'image_timeout' })), 15_000); })]); } finally { clearTimeout(timer); }
+      try { part = await Promise.race([reader.read(), new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error('圖片傳輸逾時，尚未收件'), { status: 408, code: 'image_timeout' })), Math.max(1, Math.min(15_000, deadline - Date.now()))); })]); } finally { clearTimeout(timer); }
       const { value, done } = part; if (done) break;
       size += value.byteLength;
       if (size > limit) fail(413, 'image_too_large', '分享收件每張最多 4 MiB；原檔可在 App 直接選取（25 MB）');
@@ -92,7 +93,8 @@ export function imageCaptureService({ env, now, driveFetch }) {
       const generated = await (await drive(credential.user_id, `${API}/files/generateIds?count=1&space=drive&type=files`)).json();
       const fileId = generated.ids?.[0]; if (!/^[A-Za-z0-9_-]{4,256}$/.test(fileId || '')) fail(503, 'capture_drive_failed', '無法配置暫存原檔');
       // Persist the ID BEFORE create: uncertain network outcomes remain garbage-collectable.
-      await db.prepare('UPDATE capture_images SET file_id=?,hash=?,size=? WHERE id=? AND status=\'receiving\'').bind(fileId, hash, bytes.length, id).run();
+      const registered = await db.prepare("UPDATE capture_images SET file_id=?,hash=?,size=? WHERE id=? AND status='receiving' AND expires_at>?").bind(fileId, hash, bytes.length, id, now()).run();
+      if (!registered.meta?.changes) fail(409, 'upload_expired', '上傳期限已過，尚未建立暫存原檔');
       await drive(credential.user_id, `${API}/files?fields=id`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: fileId, name, mimeType: mime, parents: [folder], appProperties: { paRole: 'captureImage', uploadId: id } }) });
       await drive(credential.user_id, `${UPLOAD}/files/${fileId}?uploadType=media&fields=id,size`, { method: 'PATCH', headers: { 'Content-Type': mime }, body: bytes });
       const check = await boundedBytes((await drive(credential.user_id, `${API}/files/${fileId}?alt=media`)).body);
@@ -128,6 +130,7 @@ export function imageCaptureService({ env, now, driveFetch }) {
       try {
         if (row.file_id) {
           const result = await driveFetch({ user_id: row.user_id }, `${API}/files/${row.file_id}?fields=id,appProperties,trashed`, { signal: AbortSignal.timeout(20_000) });
+          if (result.status === 404 && time - row.created_at < 15 * 60_000) continue; // Quarantine ambiguous creates before releasing their reservation.
           if (result.status !== 404) {
             if (!result.ok) continue;
             const file = await result.json();

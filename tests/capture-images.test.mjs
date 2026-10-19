@@ -25,7 +25,7 @@ async function fixture() {
     const url = new URL(target); const method = options.method || 'GET'; calls.push({ url: url.pathname, method });
     if (url.pathname.endsWith('/token')) return Response.json({ access_token: 'test-access', expires_in: 3600 });
     if (failure === 'drive') return Response.json({}, { status: 503 });
-    if (url.pathname.endsWith('/generateIds')) return Response.json({ ids: [`image-file-${++sequence}`] });
+    if (url.pathname.endsWith('/generateIds')) { if (failure === 'expire') clock += 601_000; return Response.json({ ids: [`image-file-${++sequence}`] }); }
     if (url.pathname.endsWith('/permissions')) return Response.json({ permissions: [{ type: shared ? 'anyone' : 'user', role: shared ? 'reader' : 'owner' }] });
     if (url.pathname.endsWith('/files') && method === 'POST') {
       const meta = JSON.parse(options.body); const file = { ...meta, id: meta.id || `folder-${++sequence}` }; files.set(file.id, file); return Response.json(file);
@@ -146,4 +146,14 @@ test('supported original formats are stored without conversion and an expired in
   f.advance(600001); await scheduledHandler({}, f.env);
   assert.equal(f.db.prepare("SELECT status FROM capture_images WHERE id='abandoned'").get().status, 'expired');
   assert.equal((await f.upload(new Uint8Array([...png, 1, 2, 3]))).status, 202);
+});
+
+
+test('slow body has an absolute deadline and expired intents cannot create an untracked Drive file', async () => {
+  let cancelled = false;
+  const stalled = new ReadableStream({ cancel() { cancelled = true; } });
+  await assert.rejects(() => boundedBytes(stalled, CAPTURE_IMAGE_LIMIT, 20), error => error.code === 'image_timeout'); assert.equal(cancelled, true);
+  const f = await fixture(); f.setFailure('expire');
+  assert.equal((await f.upload()).status, 409);
+  assert.equal([...f.files.values()].filter(file => file.appProperties?.paRole === 'captureImage').length, 0);
 });
