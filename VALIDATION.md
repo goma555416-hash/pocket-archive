@@ -2,6 +2,28 @@
 
 基線 `main`：`2c2982504b09ce704916e9bb516ddbb12e0d744d`（以 GitHub connector 確認與本機相同）。全部資料為合成／匿名 fixture，未存取 Notion、真實 Drive／D1、Cloudflare Secret 或部署。
 
+## PR #11 審閱修正與可執行驗證（2026-10-19）
+
+已閱讀 review 5567217333 與 Actions run 39203229540／job 117900447897 的真實失敗紀錄：原版在 Chrome 中觀察到 dialog.open=false，但非同步 close 事件尚未清理 src，造成 tests/e2e.mjs「釋放原圖 URL」失敗。
+
+修正：ESC／關閉鈕先同步清除圖片與下載連結並 revoke Object URL；原生 close 仍有清理 fallback，過期 close 事件不清除已重開的 viewer。E2E 保留 src 斷言，另等待 close 生命週期、追蹤原生 revoke 的實際呼叫，驗證同一 Blob URL 關閉前可讀、關閉後 fetch 失敗；覆蓋 ESC、關閉鈕、dialog.close、背景關閉、pagehide 與立即重開。PWA cache 版本更新，讓現有安裝取得修正。
+
+完整 E2E 又發現測試對 AI 套用／復原有錯誤時序假設：完成後收藏會離開收件匣，復原按鈕需先非同步載入快照。已改為等完成後檢查「已整理」與復原後的「收件匣」，並等待復原按鈕可用；沒有跳過、刪除或放寬產品行為驗證。
+
+本次在核准的雲端環境實際執行：
+
+- npm ci：成功，lockfile 未變更。
+- npm test：13 個測試檔及所有模組語法檢查通過。
+- npm run test:security：4 個安全測試檔通過。
+- npm run test:e2e：完整 Chromium 測試通過，含上列實際 Blob URL revoke、完整備份／AI 套用與復原、OAuth popup 手勢、IndexedDB 原子回滾、390px、可及性與離線啟動。
+- npm run test:assets：14 個公開資產成功、15 個匿名私有哨兵路徑皆排除。
+- npx wrangler deploy --dry-run --outdir /tmp/pa-pr11-worker-build：Wrangler 4.151.1 成功，bundle 85.84 KiB／gzip 20.84 KiB；沒有正式部署。
+- git diff --check：通過。
+
+Actions 改成 test（含安全）、e2e、assets、worker_bundle 四個獨立工作；任何一項失敗不再讓其他驗證 skipped。原有 deploy 工作仍排除 pull_request，且須四項全部成功。PR 保持 Draft；真實 iPhone／Windows／Google Drive／Codex raw 原 file ID 交換尚待 UAT。未操作正式 D1、OAuth、Secret、真實收藏或部署。
+
+下列「本機環境限制與 CI」是先前受限執行的歷史紀錄，本節已取代其可執行性狀態；最新遠端結果以 PR #11 的 GitHub Actions 為準。
+
 ## 本機已執行
 
 - 基線 `npm test`：12 個測試檔通過，語法檢查通過。

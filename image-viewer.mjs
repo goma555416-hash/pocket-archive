@@ -14,11 +14,18 @@ export function createImageViewer(dialog, { getAttachment, returnFocus = () => d
     dialog.querySelector('[data-zoom="reset"]').textContent = `${Math.round(zoom * 100)}% · 重設`;
   }
   function cleanup() {
-    generation++; image.removeAttribute('src'); link.removeAttribute('href'); link.hidden = true;
+    generation++; image.onload = null; image.onerror = null;
+    image.removeAttribute('src'); image.hidden = true; link.removeAttribute('href'); link.hidden = true;
     if (url) URL.revokeObjectURL(url); url = null; pointers.clear(); gesture = null;
   }
-  dialog.addEventListener('close', () => { cleanup(); (opener?.isConnected ? opener : returnFocus())?.focus(); });
-  dialog.querySelector('[data-viewer-close]').addEventListener('click', () => dialog.close());
+  function close() { cleanup(); if (dialog.open) dialog.close(); }
+  dialog.addEventListener('close', () => {
+    // Native close events are queued. An earlier close must not clear a reopened viewer.
+    if (dialog.open) return;
+    cleanup(); (opener?.isConnected ? opener : returnFocus())?.focus();
+  });
+  dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
+  dialog.querySelector('[data-viewer-close]').addEventListener('click', close);
   dialog.querySelectorAll('[data-zoom]').forEach(button => button.addEventListener('click', () => resize(button.dataset.zoom === 'reset' ? 1 : zoom * (button.dataset.zoom === 'in' ? 1.5 : 1 / 1.5))));
   surface.addEventListener('keydown', event => {
     if (['+', '=', '-', '0'].includes(event.key)) { event.preventDefault(); resize(event.key === '0' ? 1 : zoom * (event.key === '-' ? 1 / 1.5 : 1.5)); }
@@ -56,6 +63,6 @@ export function createImageViewer(dialog, { getAttachment, returnFocus = () => d
         image.alt = `原始圖片：${entry.title}`; image.src = url;
       } catch (error) { if (generation === token) status.textContent = error.message; }
     },
-    dispose() { if (dialog.open) dialog.close(); cleanup(); }
+    dispose: close
   };
 }
