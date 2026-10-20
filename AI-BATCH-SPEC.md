@@ -75,4 +75,4 @@ Drive 流程的 schema 完全相同。為兼容不同 OAuth Client 的 `drive.fi
 
 ## v2.3 啟動與批次範圍
 
-Drive 送出後顯示一鍵複製的 export_id 專用指令，不包含私人 URL／token／匯出內容；禁止 Notion／其他私人資料來源。App 保存 itemIds 並要求 Drive 結果 ID 完整一對一，原 file ID 的 parent、檔名、appProperties 與內容 export_id 必須匹配；舊工作缺 itemIds 時只從原 AI-Inbox 下載復原。缺失／不匹配／重複占位檔 fail closed。離線手動匯入仍保留既有部分結果預覽能力。
+Drive 送出後，App 先驗證既有原檔的 appProperties／父資料夾／雜湊，再顯示含明確 Drive file IDs 與原檔 SHA-256 的 export_id 專用指令，不包含私人 URL／token／匯出內容；禁止 Notion／其他私人資料來源。App 保存 itemIds 並要求 Drive 結果 ID 完整一對一，原 file ID 的 parent、檔名、appProperties 與內容 export_id 必須匹配；舊工作缺 itemIds 時只從原 AI-Inbox 下載復原。缺失／不匹配／重複占位檔 fail closed。離線手動匯入仍保留既有部分結果預覽能力。
