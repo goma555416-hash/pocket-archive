@@ -32,3 +32,25 @@
 iPhone Safari／主畫面 PWA、各 App 實際分享面板、Windows 真機、VoiceOver／Dynamic Type 以及真實 Drive 原 ID 寫回仍待使用者驗收，見 UAT-V2.3.2.md。沒有宣稱各社群 App 的真機收件全部通過。既知圖片刪除再收藏問題不在本次修復範圍。
 
 維持 IndexedDB v2、AI／備份 schema v2、sync v1，不需要額外 D1 migration；不重跑歷史 migration。PR 建立後不合併、不部署；CI 結果以 GitHub 最新提交顯示為準。
+
+## Windows 測試相容性後續修正
+
+基準為已合併 PR #14 的 main `21726ba`，開發分支 `codex/windows-test-compat`。Windows PowerShell 回報原有 121 項中僅 Service Worker 資產存在性測試失敗，路徑為 `C:\C:\Users\...\index.html`。
+
+- `tests/pwa.test.mjs`：將 File URL 的 pathname 交給 path.resolve 會錯誤處理 Windows 磁碟機前綴及 URL 編碼。改為直接傳 File URL 給 fs.access，由 Node 原生處理。
+- `tests/e2e.mjs`：儲存庫根目錄以 fileURLToPath 轉換，供檔案讀取及瀏覽器 cwd 使用。原先固定呼叫 python 的靜態伺服器改用 Node 內建 HTTP，移除 Windows Python launcher／安裝依賴；只監聽 loopback，保持原測試連接埠與 MIME，限制路徑於儲存庫內。
+- `tests/helpers/chromium.mjs`：CHROMIUM_PATH 優先，無效時明確報錯。未指定時，Windows 檢查 Program Files／Program Files (x86)／LOCALAPPDATA 下 Chrome、Edge 常見位置；Linux 保留 Chromium／Chrome 路徑。執行檔與參數直接傳給 spawn，不經 shell；Edge CDP 版本名稱也可接受。
+- `tests/chromium.test.mjs`：新增 8 個測試，涵蓋 Windows 安裝位置、空白／中文路徑、環境變數大小寫、明確覆寫及錯誤提示，以及 Linux／既有 CI 路徑。
+- 其他 tests／scripts 已盤點；Static Assets 腳本已使用 fileURLToPath／process.execPath，無須修改。剩餘 pathname 是 HTTP URL 路由判斷，並非檔案路徑問題。未改動正式 App、分類模型、Drive、Worker、D1、套件／版本或部署設定。
+
+本次 Linux 雲端實測：
+
+| 指令 | 結果 |
+| --- | --- |
+| `npm run test:all` | 全部成功；129 個單元／整合測試（原 121 + 新增 8）通過，0 失敗、0 略過，包含語法檢查、Static Assets 預檢與完整 Chromium E2E。 |
+| `npm test`（最終修改後） | 15 個測試檔全部通過；另以展開模式驗證 PWA／瀏覽器偵測共 12 項全部通過。 |
+| `npm run test:security` | 17 項通過，0 失敗、0 略過；與上述安全回歸重疊，不另加總。 |
+| `node scripts/validate-organized.mjs examples/organized-example.json examples/inbox-example.json` | 既有 2 筆匿名範例通過。 |
+| `node --check tests/e2e.mjs`、`node --check tests/helpers/chromium.mjs`、`git diff --check` | 通過。 |
+
+Windows 路徑偵測使用模擬環境變數及檔案存在性，不等同已在 Windows 執行。尚需在 Windows Node.js 24／PowerShell，以 README 的 `npm.cmd ci`、`npm.cmd test`、`npm.cmd run test:assets`、`npm.cmd run test:e2e` 重新驗證；確認原 `C:\C:\...` 錯誤消失、Chrome／Edge 能自動或透過 CHROMIUM_PATH 啟動，並能在含空白／中文的儲存庫與使用者暫存目錄完成 E2E 及清理。未新增 Windows CI，也未宣稱真機通過。
