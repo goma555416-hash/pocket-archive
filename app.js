@@ -8,7 +8,7 @@ import {
   previewMerge, createInboxEnvelope, readOrganized, applySuggestions, restoreSnapshot, matchesEntry,
   escapeHtml, sha256, hasValidImageSignature, makeId
 } from './lib.mjs';
-import { initRepository } from './db.mjs';
+import { initRepository, StaleDataError } from './db.mjs';
 import { createZip, readZip, decodeText } from './archive.mjs';
 import { GoogleAuthSession, DriveApi, isValidGoogleClientId, loadGoogleIdentity } from './drive.mjs';
 import { BackendDriveApi, PocketBackendClient, authResultFromLocation } from './backend.mjs';
@@ -26,8 +26,8 @@ const state = {
   cloudPassphrase: '', auth: null, drive: null, workspace: null, backupService: null, aiExchange: null, syncService: null,
   cloudUser: null, cloudBusy: false, backupTimer: null, syncTimer: null,
   backend: null, backendAvailable: false, backendOwner: null, backendSession: null, backendSessions: [],
-  captureCredentials: [], captureBusy: false, localWriteBusy: 0, activeAiExportId: '',
-  googleIdentityStatus: 'idle', googleIdentityPromise: null, editorDecision: null, editorUrl: ''
+  captureCredentials: [], captureBusy: false, localWriteBusy: 0, dataRevision: 0, activeAiExportId: '',
+  googleIdentityStatus: 'idle', googleIdentityPromise: null, editorDecision: null, editorUrl: '', editorBaseline: null
 };
 const names = { inbox: ['收件匣', '尚未整理的收藏'], saved: ['已整理', '已經整理好的收藏'], archived: ['已封存', '暫時收起的收藏'], all: ['全部收藏', '這裡收著所有值得留下的事物'] };
 let toastTimer; let toastPopoverTimer; let thumbnailGeneration = 0;
@@ -165,22 +165,29 @@ function render() {
   loadThumbnails();
 }
 
-async function persistEntries(nextEntries, message) {
+async function persistEntries(nextEntries, message, attachmentBlobs = new Map()) {
   if (state.captureBusy) { toast('正在安全接收收藏，請稍後再儲存變更'); return false; }
   state.localWriteBusy++;
   try {
     const sync = recordLocalChanges(state.entries, nextEntries, { deviceId: state.deviceId, journal: state.syncJournal, tombstones: state.tombstones });
     const retained = new Set(sync.entries.map(entry => entry.id));
     const deleteAttachmentIds = state.entries.filter(entry => !retained.has(entry.id)).map(entry => entry.attachment?.id).filter(Boolean);
-    const savedEntries = await state.repository.replaceBundle(sync.entries, new Map(), {
-      deleteAttachmentIds,
+    const savedEntries = await state.repository.replaceBundle(sync.entries, attachmentBlobs, {
+      deleteAttachmentIds, expectedRevision: state.dataRevision,
       meta: { 'sync-journal': sync.journal, 'sync-tombstones': sync.tombstones, 'cloud-dirty': true }
     });
-    state.entries = savedEntries;
+    state.entries = savedEntries; state.dataRevision = savedEntries.dataRevision;
     state.syncJournal = sync.journal; state.tombstones = sync.tombstones;
     scheduleAutoBackup(); scheduleAutoSync();
     render(); if (message) toast(message); return true;
-  } catch (error) { toast(error.message, 6500); return false; }
+  } catch (error) {
+    if (error instanceof StaleDataError) {
+      const snapshot = await state.repository.readSyncSnapshot();
+      state.entries = snapshot.entries; state.syncJournal = snapshot.journal; state.tombstones = snapshot.tombstones; state.dataRevision = snapshot.revision;
+      render();
+    }
+    toast(error.message, 6500); return false;
+  }
   finally { state.localWriteBusy--; }
 }
 
@@ -199,6 +206,7 @@ function openEditor(entry = null, incoming = null) {
   $('#entry-url').value = entry?.originalUrl || entry?.url || incoming?.url || '';
   state.editorUrl = $('#entry-url').value;
   state.editorDecision = entry ? { type: entry.type, classification: entry.classification } : classifyContent({ url: state.editorUrl });
+  state.editorBaseline = entry ? JSON.stringify(entry) : null;
   $('#entry-title').value = entry?.title || incoming?.title || '';
   $('#entry-note').value = entry?.note || incoming?.note || '';
   $('#entry-category').value = entry?.category || '';
@@ -241,6 +249,10 @@ async function saveFromForm(event) {
   event.preventDefault();
   const id = $('#entry-id').value;
   const current = id ? state.entries.find(entry => entry.id === id) : null;
+  if (id && (!current || JSON.stringify(current) !== state.editorBaseline)) {
+    $('#entry-error').textContent = '編輯期間收藏已被同步或其他操作更新。請重新開啟收藏，以免覆寫較新的資料。';
+    $('#entry-error').hidden = false; toast($('#entry-error').textContent, 7000); return;
+  }
   let entry;
   try {
     refreshEditorType();
@@ -317,13 +329,14 @@ async function prepareImages(fileList) {
 async function saveImages(event) {
   event.preventDefault();
   const valid = state.images.filter(item => item.status === 'valid');
-  let saved = 0; const failures = []; const added = [];
+  let saved = 0; const failures = []; const added = []; const blobs = new Map();
   for (const item of valid) {
     try {
-      const entry = createImageEntry(item.file, item.hash); entry.attachment = { ...entry.attachment, ...await imageDimensions(item.file) }; await state.repository.saveEntry(entry, item.file); added.unshift(entry); saved += 1;
+      const entry = createImageEntry(item.file, item.hash); entry.attachment = { ...entry.attachment, ...await imageDimensions(item.file) }; blobs.set(entry.attachment.id, item.file); added.unshift(entry); saved += 1;
     } catch (error) { failures.push(`${item.file.name}: ${error.message}`); }
   }
-  if (added.length) await persistEntries([...added, ...state.entries]); else render();
+  if (added.length && !await persistEntries([...added, ...state.entries], '', blobs)) return;
+  else if (!added.length) render();
   if (!failures.length) { closeDialog('image-dialog'); toast(`已保存 ${saved} 張原始圖片 ✓`); }
   else toast(`已保存 ${saved} 張；${failures.length} 張失敗。${failures[0]}`, 8000);
 }
@@ -449,13 +462,15 @@ async function confirmImport() {
       const retained = new Set(reconciled.entries.map(entry => entry.id)); const deleteAttachmentIds = state.entries.filter(entry => !retained.has(entry.id)).map(entry => entry.attachment?.id).filter(Boolean);
       const meta = { 'sync-journal': nextJournal, 'sync-tombstones': reconciled.tombstones, 'sync-conflicts': nextConflicts, 'ai-export-ids': ai.exportIds, 'cloud-ai-jobs': ai.cloudJobs, 'migration-history': nextHistory, 'cloud-dirty': true };
       if (Object.keys(migration.driveWorkspace).length) meta['drive-workspace'] = migration.driveWorkspace;
-      state.entries = await state.repository.replaceBundle(reconciled.entries, needed, { deleteAttachmentIds, meta });
+      state.entries = await state.repository.replaceBundle(reconciled.entries, needed, { deleteAttachmentIds, meta, expectedRevision: state.dataRevision });
+      state.dataRevision = state.entries.dataRevision;
       state.syncJournal = nextJournal; state.tombstones = reconciled.tombstones; state.cloudConflicts = nextConflicts; state.cloudJobs = ai.cloudJobs;
       const imported = entries.length; state.pendingImport = null; render(); renderCloudStatus(); closeDialog('confirm-dialog'); scheduleAutoBackup(); scheduleAutoSync();
       toast(`跨來源遷移完成：新增 ${imported} 筆、保留 ${Object.keys(reconciled.tombstones).length} 筆刪除紀錄${nextConflicts.length ? `，${nextConflicts.length} 筆衝突待確認` : ''} ✓`, 8500);
       return;
     }
-    await state.repository.importBundle(entries, needed); await persistEntries([...entries, ...state.entries]); state.pendingImport = null; render(); closeDialog('confirm-dialog'); toast(`已安全合併 ${entries.length} 筆收藏 ✓`);
+    if (!await persistEntries([...entries, ...state.entries], '', needed)) return;
+    state.pendingImport = null; render(); closeDialog('confirm-dialog'); toast(`已安全合併 ${entries.length} 筆收藏 ✓`);
   } catch (error) { toast(error.message, 7500); }
 }
 
@@ -770,7 +785,8 @@ async function importCaptureJobs() {
         await state.backend.retryCaptureJob(job.id, 'local_receive_failed', job.attemptCount).catch(() => {});
         throw error;
       } finally {
-        state.entries = await state.repository.listEntries(); state.syncJournal = await state.repository.getMeta('sync-journal', {}); state.tombstones = await state.repository.getMeta('sync-tombstones', {}); render();
+        const snapshot = await state.repository.readSyncSnapshot();
+          state.entries = snapshot.entries; state.syncJournal = snapshot.journal; state.tombstones = snapshot.tombstones; state.dataRevision = snapshot.revision; render();
       }
     }
     if (saved || duplicates) toast(`快速收件已入庫 ${saved} 筆；${duplicates} 筆重複。Drive 同步將接續執行。`);
@@ -862,21 +878,34 @@ async function previewCloudRestore(index) {
 
 async function syncNow(automatic = false) {
   if (!cloudConnected()) return;
-  if (state.cloudBusy) { if (automatic) scheduleAutoSync(1800); return; }
+  // Editing is allowed while a network request is in flight. Its local commit
+  // advances the revision, so this sync must discard its obsolete snapshot.
+  if (state.cloudBusy || state.localWriteBusy || (automatic && $('#entry-dialog').open)) {
+    if (automatic) scheduleAutoSync(1800);
+    return;
+  }
   state.cloudBusy = true; renderCloudStatus();
+  let retryStale = false;
   try {
-    if (state.entries.some(entry => !entry.sync)) {
-      const bootstrap = recordLocalChanges(state.entries.filter(entry => entry.sync), state.entries, { deviceId: state.deviceId, journal: state.syncJournal, tombstones: state.tombstones });
-      state.entries = await state.repository.replaceBundle(bootstrap.entries, new Map(), {
+    let snapshot = await state.repository.readSyncSnapshot();
+    if (snapshot.entries.some(entry => !entry.sync)) {
+      const bootstrap = recordLocalChanges(snapshot.entries.filter(entry => entry.sync), snapshot.entries, { deviceId: state.deviceId, journal: snapshot.journal, tombstones: snapshot.tombstones });
+      const bootstrapped = await state.repository.replaceBundle(bootstrap.entries, new Map(), {
+        expectedRevision: snapshot.revision,
         meta: { 'sync-journal': bootstrap.journal, 'sync-tombstones': bootstrap.tombstones }
       });
+      state.entries = bootstrapped; state.dataRevision = bootstrapped.dataRevision;
       state.syncJournal = bootstrap.journal; state.tombstones = bootstrap.tombstones;
+      snapshot = await state.repository.readSyncSnapshot();
     }
-    const result = await state.syncService.sync({ entries: state.entries, repository: state.repository, deviceId: state.deviceId, journal: state.syncJournal, tombstones: state.tombstones });
+    const result = await state.syncService.sync({ entries: snapshot.entries, repository: state.repository, deviceId: state.deviceId, journal: snapshot.journal, tombstones: snapshot.tombstones });
     const conflictMap = new Map([...state.cloudConflicts, ...result.conflicts].map(conflict => [`${conflict.itemId}:${JSON.stringify(conflict.local.clock)}:${JSON.stringify(conflict.remote.clock)}`, conflict]));
     const nextConflicts = pruneResolvedConflicts([...conflictMap.values()], result.entries, result.tombstones).slice(-100);
     const nextSettings = { ...state.cloudSettings, lastSyncAt: new Date().toISOString() };
+    // Atomic compare-and-commit prevents a stale background sync from replacing
+    // edits saved during Drive I/O; it also protects against other tabs.
     const savedEntries = await state.repository.replaceBundle(result.entries, result.attachmentBlobs, {
+      expectedRevision: snapshot.revision,
       meta: {
         'sync-journal': result.journal,
         'sync-tombstones': result.tombstones,
@@ -884,11 +913,24 @@ async function syncNow(automatic = false) {
         'cloud-settings': nextSettings
       }
     });
-    state.entries = savedEntries; state.syncJournal = result.journal; state.tombstones = result.tombstones;
+    state.entries = savedEntries; state.dataRevision = savedEntries.dataRevision;
+    state.syncJournal = result.journal; state.tombstones = result.tombstones;
     state.cloudConflicts = nextConflicts; state.cloudSettings = nextSettings;
     render(); renderCloudStatus(); if (!automatic || result.applied || result.conflicts.length) toast(`同步完成：套用 ${result.applied} 筆，${result.conflicts.length} 筆衝突待確認`);
-  } catch (error) { if (!automatic) toast(`同步失敗：${error.message}`, 9000); else $('#cloud-backup-note').textContent = `自動同步待重試：${error.message}`; }
-  finally { state.cloudBusy = false; renderCloudStatus(); }
+  } catch (error) {
+    if (error instanceof StaleDataError) {
+      retryStale = true;
+      const latest = await state.repository.readSyncSnapshot();
+      state.entries = latest.entries; state.syncJournal = latest.journal;
+      state.tombstones = latest.tombstones; state.dataRevision = latest.revision;
+      render();
+      if (!automatic) toast('同步期間有新的本機編輯，過期結果已安全略過；正在重新安排同步');
+    } else if (!automatic) toast(`同步失敗：${error.message}`, 9000);
+    else $('#cloud-backup-note').textContent = `自動同步待重試：${error.message}`;
+  } finally {
+    state.cloudBusy = false; renderCloudStatus();
+    if (retryStale && cloudConnected()) scheduleAutoSync(1200);
+  }
 }
 
 async function handleConflictChoice(index, choice) {
@@ -914,7 +956,7 @@ async function handleConflictChoice(index, choice) {
     deleteAttachmentIds: deletedAttachment ? [deletedAttachment] : [],
     meta: { 'sync-journal': nextJournal, 'sync-tombstones': nextTombstones, 'sync-conflicts': nextConflicts, 'cloud-dirty': true }
   });
-  state.entries = savedEntries; state.tombstones = nextTombstones; state.syncJournal = nextJournal; state.cloudConflicts = nextConflicts;
+  state.entries = savedEntries; state.dataRevision = savedEntries.dataRevision; state.tombstones = nextTombstones; state.syncJournal = nextJournal; state.cloudConflicts = nextConflicts;
   scheduleAutoBackup(); scheduleAutoSync();
   render(); renderCloudStatus(); toast('衝突選擇已保存，請再次同步傳送結果');
 }
@@ -1045,9 +1087,10 @@ function handleLegacyShareQuery() {
 async function init() {
   bindEvents();
   try {
-    const { repository, migration } = await initRepository(); state.repository = repository; state.entries = await repository.listEntries();
+    const { repository, migration } = await initRepository(); state.repository = repository;
+    const initial = await repository.readSyncSnapshot(); state.entries = initial.entries; state.dataRevision = initial.revision;
     state.deviceId = await repository.getMeta('device-id') || makeId('device'); await repository.setMeta('device-id', state.deviceId);
-    state.syncJournal = await repository.getMeta('sync-journal', {}); state.tombstones = await repository.getMeta('sync-tombstones', {});
+    state.syncJournal = initial.journal; state.tombstones = initial.tombstones;
     state.cloudConflicts = await repository.getMeta('sync-conflicts', []); state.cloudJobs = await repository.getMeta('cloud-ai-jobs', []); state.activeAiExportId = await repository.getMeta('active-ai-export-id', '');
     state.cloudSettings = { ...state.cloudSettings, ...(await repository.getMeta('cloud-settings', {})) };
     $('#google-client-id').value = state.cloudSettings.clientId || ''; $('#cloud-auto-backup').checked = state.cloudSettings.autoBackup !== false;
