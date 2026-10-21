@@ -197,6 +197,11 @@ try {
     await repository.deleteEntry(captured); await repository.setMeta('sync-journal',oldJournal); await repository.setMeta('capture-receipts',oldReceipts); return {first,second,receipt:receipt.includes(captured.id),hash:await sha256(saved),original:await sha256(blob)};
   })()`);
   assert.deepEqual(atomicCapture, {first:'saved',second:'duplicate',receipt:true,hash:atomicCapture.original,original:atomicCapture.original});
+  // This test mutated IndexedDB from an independent repository instance, not
+  // through App UI. Reload to refresh the App's in-memory data revision before
+  // testing ordinary backup import; a stale external editor must fail closed.
+  await cdp.send('Page.reload');
+  await waitFor(() => cdp.evaluate("window.__PA_READY__ === true"), '外部資料庫測試後重新載入 App');
   process.stdout.write('E2E：完整圖片、原圖縮放、ESC、焦點、原子收件與冪等紀錄通過\n');
 
   await cdp.evaluate(`(() => { const input=document.querySelector('#search-input'); input.value='測試分類 自動化'; input.dispatchEvent(new Event('input',{bubbles:true})); })()`);
