@@ -197,6 +197,11 @@ try {
     await repository.deleteEntry(captured); await repository.setMeta('sync-journal',oldJournal); await repository.setMeta('capture-receipts',oldReceipts); return {first,second,receipt:receipt.includes(captured.id),hash:await sha256(saved),original:await sha256(blob)};
   })()`);
   assert.deepEqual(atomicCapture, {first:'saved',second:'duplicate',receipt:true,hash:atomicCapture.original,original:atomicCapture.original});
+  // This test mutated IndexedDB from an independent repository instance, not
+  // through App UI. Reload to refresh the App's in-memory data revision before
+  // testing ordinary backup import; a stale external editor must fail closed.
+  await cdp.send('Page.reload');
+  await waitFor(() => cdp.evaluate("window.__PA_READY__ === true"), '外部資料庫測試後重新載入 App');
   process.stdout.write('E2E：完整圖片、原圖縮放、ESC、焦點、原子收件與冪等紀錄通過\n');
 
   await cdp.evaluate(`(() => { const input=document.querySelector('#search-input'); input.value='測試分類 自動化'; input.dispatchEvent(new Event('input',{bubbles:true})); })()`);
@@ -423,7 +428,7 @@ try {
 
   assert.deepEqual(await cdp.evaluate(`(() => [...document.querySelectorAll('button')].filter(button => !(button.textContent.trim() || button.getAttribute('aria-label') || button.title)).map(button => button.id || button.outerHTML))()`), [], '所有按鈕有可存取名稱');
   assert.deepEqual(await cdp.evaluate(`(() => [...document.querySelectorAll('input:not([type="hidden"]),select,textarea')].filter(control => !control.closest('label') && !control.getAttribute('aria-label') && !control.getAttribute('aria-labelledby')).map(control => control.id))()`), [], '所有表單控制項有標籤');
-  await cdp.evaluate("document.querySelectorAll('dialog[open]').forEach(dialog=>dialog.close()); document.dispatchEvent(new KeyboardEvent('keydown',{key:'/'}))");
+  await cdp.evaluate("document.querySelectorAll('dialog[open]').forEach(dialog=>dialog.close()); document.activeElement?.blur(); document.dispatchEvent(new KeyboardEvent('keydown',{key:'/'}))");
   assert.equal(await cdp.evaluate("document.activeElement.id"), 'search-input', '/ 鍵聚焦搜尋');
   await cdp.evaluate("document.querySelector('#search-input').blur(); document.dispatchEvent(new KeyboardEvent('keydown',{key:'n'}))");
   assert.equal(await cdp.evaluate("document.querySelector('#entry-dialog').open"), true, 'N 鍵開啟新增');
@@ -475,7 +480,7 @@ try {
     await caches.open('pocket-archive-v2.3.1-ai-handoff');
     await navigator.serviceWorker.register('./sw.js?upgrade-v232');
   })()`);
-  await waitFor(() => cdp.evaluate("caches.keys().then(keys=>!keys.includes('pocket-archive-v2.3.1-ai-handoff') && keys.includes('pocket-archive-v2.3.2-content-model'))"), '舊快取更新清除');
+  await waitFor(() => cdp.evaluate("caches.keys().then(keys=>!keys.includes('pocket-archive-v2.3.1-ai-handoff') && keys.includes('pocket-archive-v2.3.3-sync-guard'))"), '舊快取更新清除');
   assert.ok(await cdp.evaluate("caches.match('./content-model.mjs').then(Boolean)"), '新分類模組已離線快取');
   await cdp.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
   await cdp.send('Page.reload');

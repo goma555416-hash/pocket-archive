@@ -4,11 +4,27 @@ import { STORAGE_KEY, validatedEntry } from './lib.mjs';
 export const DB_NAME = 'pocket-archive';
 export const DB_VERSION = 2;
 
+const REVISION_KEY = 'data-revision';
+const revisionNumber = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
+
+export class StaleDataError extends Error {
+  constructor() {
+    super('本機收藏在操作期間已有新的修改；已阻止舊資料覆寫，請重新開啟收藏後重試。');
+    this.name = 'StaleDataError';
+  }
+}
+
 function requestResult(request) {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error || new Error('IndexedDB 操作失敗'));
   });
+}
+
+async function markDataRevision(transaction) {
+  const store = transaction.objectStore('meta');
+  const row = await requestResult(store.get(REVISION_KEY));
+  store.put({ key: REVISION_KEY, value: revisionNumber(row?.value) + 1 });
 }
 
 function transactionDone(transaction) {
@@ -80,44 +96,89 @@ export class PocketRepository {
     return result.map(validatedEntry);
   }
 
+  async readSyncSnapshot() {
+    const tx = this.db.transaction(['entries', 'meta'], 'readonly');
+    const meta = tx.objectStore('meta');
+    const [entries, journal, tombstones, revision] = await Promise.all([
+      requestResult(tx.objectStore('entries').getAll()),
+      requestResult(meta.get('sync-journal')),
+      requestResult(meta.get('sync-tombstones')),
+      requestResult(meta.get(REVISION_KEY))
+    ]);
+    await transactionDone(tx);
+    return {
+      entries: entries.map(validatedEntry),
+      journal: journal?.value || {},
+      tombstones: tombstones?.value || {},
+      revision: revisionNumber(revision?.value)
+    };
+  }
+
   async saveEntry(entry, blob = null) {
     const value = validatedEntry(entry);
-    const stores = blob ? ['entries', 'attachments'] : ['entries'];
+    const stores = blob ? ['entries', 'attachments', 'meta'] : ['entries', 'meta'];
     const tx = this.db.transaction(stores, 'readwrite');
-    tx.objectStore('entries').put(value);
-    if (blob && value.attachment) tx.objectStore('attachments').put({ id: value.attachment.id, blob });
-    try { await transactionDone(tx); } catch (error) { throw storageError(error); }
+    const done = transactionDone(tx);
+    try {
+      await markDataRevision(tx);
+      tx.objectStore('entries').put(value);
+      if (blob && value.attachment) tx.objectStore('attachments').put({ id: value.attachment.id, blob });
+      await done;
+    } catch (error) {
+      try { tx.abort(); } catch { /* already closed */ }
+      await done.catch(() => {}); throw storageError(error);
+    }
     return value;
   }
 
   async saveEntries(entries) {
     const values = entries.map(validatedEntry);
-    const tx = this.db.transaction('entries', 'readwrite');
-    values.forEach(entry => tx.objectStore('entries').put(entry));
-    try { await transactionDone(tx); } catch (error) { throw storageError(error); }
+    const tx = this.db.transaction(['entries', 'meta'], 'readwrite');
+    const done = transactionDone(tx);
+    try {
+      await markDataRevision(tx);
+      values.forEach(entry => tx.objectStore('entries').put(entry));
+      await done;
+    } catch (error) {
+      try { tx.abort(); } catch { /* already closed */ }
+      await done.catch(() => {}); throw storageError(error);
+    }
     return values;
   }
 
   async replaceEntries(entries) {
     const values = entries.map(validatedEntry);
-    const tx = this.db.transaction('entries', 'readwrite');
-    const store = tx.objectStore('entries');
-    store.clear();
-    values.forEach(entry => store.put(entry));
-    try { await transactionDone(tx); } catch (error) { throw storageError(error); }
+    const tx = this.db.transaction(['entries', 'meta'], 'readwrite');
+    const done = transactionDone(tx);
+    try {
+      await markDataRevision(tx);
+      const store = tx.objectStore('entries');
+      store.clear();
+      values.forEach(entry => store.put(entry));
+      await done;
+    } catch (error) {
+      try { tx.abort(); } catch { /* already closed */ }
+      await done.catch(() => {}); throw storageError(error);
+    }
     return values;
   }
 
-  async replaceBundle(entries, attachmentBlobs = new Map(), { meta = {}, deleteAttachmentIds = [] } = {}) {
+  async replaceBundle(entries, attachmentBlobs = new Map(), { meta = {}, deleteAttachmentIds = [], expectedRevision = null } = {}) {
     const values = entries.map(validatedEntry);
-    const stores = ['entries', 'attachments'];
-    if (Object.keys(meta).length) stores.push('meta');
-    const tx = this.db.transaction(stores, 'readwrite');
+    // Compare the snapshot version and write the replacement in one IndexedDB
+    // transaction, even when another tab is changing the same local database.
+    const tx = this.db.transaction(['entries', 'attachments', 'meta'], 'readwrite');
     const done = transactionDone(tx);
     try {
       const entryStore = tx.objectStore('entries');
       const attachmentStore = tx.objectStore('attachments');
-      const stored = await requestResult(entryStore.getAll());
+      const metaStore = tx.objectStore('meta');
+      const [stored, revisionRow] = await Promise.all([
+        requestResult(entryStore.getAll()),
+        requestResult(metaStore.get(REVISION_KEY))
+      ]);
+      const revision = revisionNumber(revisionRow?.value);
+      if (expectedRevision !== null && revision !== expectedRevision) throw new StaleDataError();
       const previous = new Map(stored.map(entry => [entry.id, entry]));
       const retained = new Set(values.map(entry => entry.id));
       for (const entry of stored) if (!retained.has(entry.id)) entryStore.delete(entry.id);
@@ -131,14 +192,17 @@ export class PocketRepository {
         if (blob) attachmentStore.put({ id: entry.attachment.id, blob });
       }
       for (const id of deleteAttachmentIds) attachmentStore.delete(id);
-      if (stores.includes('meta')) {
-        const metaStore = tx.objectStore('meta');
-        for (const [key, value] of Object.entries(meta)) metaStore.put({ key, value });
+      for (const [key, value] of Object.entries(meta)) {
+        if (key === REVISION_KEY) throw new Error('資料版本欄位不可直接修改');
+        metaStore.put({ key, value });
       }
+      metaStore.put({ key: REVISION_KEY, value: revision + 1 });
       await done;
+      Object.defineProperty(values, 'dataRevision', { value: revision + 1 });
     } catch (error) {
       try { tx.abort(); } catch { /* already aborted or completed */ }
       await done.catch(() => {});
+      if (error instanceof StaleDataError) throw error;
       throw storageError(error);
     }
     return values;
@@ -150,8 +214,9 @@ export class PocketRepository {
     const tx = this.db.transaction(['entries', 'attachments', 'meta'], 'readwrite');
     const done = transactionDone(tx); const entriesStore = tx.objectStore('entries'); const meta = tx.objectStore('meta');
     try {
-      const [rawEntries, rawJournal, rawTombstones, rawReceipts] = await Promise.all([
-        requestResult(entriesStore.getAll()), requestResult(meta.get('sync-journal')), requestResult(meta.get('sync-tombstones')), requestResult(meta.get('capture-receipts'))
+      const [rawEntries, rawJournal, rawTombstones, rawReceipts, revisionRow] = await Promise.all([
+        requestResult(entriesStore.getAll()), requestResult(meta.get('sync-journal')), requestResult(meta.get('sync-tombstones')), requestResult(meta.get('capture-receipts')),
+        requestResult(meta.get(REVISION_KEY))
       ]);
       const entries = rawEntries.map(validatedEntry); const receipts = rawReceipts?.value || [];
       const duplicate = receipts.includes(value.id) || entries.some(item => item.id === value.id || (value.attachment ? item.attachment?.hash === value.attachment.hash : item.normalizedUrl === value.normalizedUrl));
@@ -160,6 +225,7 @@ export class PocketRepository {
         entriesStore.put(sync.entries.find(item => item.id === value.id));
         if (blob) tx.objectStore('attachments').put({ id: value.attachment.id, blob });
         meta.put({ key: 'sync-journal', value: sync.journal }); meta.put({ key: 'sync-tombstones', value: sync.tombstones }); meta.put({ key: 'cloud-dirty', value: true });
+        meta.put({ key: REVISION_KEY, value: revisionNumber(revisionRow?.value) + 1 });
       }
       meta.put({ key: 'capture-receipts', value: [...new Set([value.id, ...receipts])].slice(0, 500) });
       await done; return duplicate ? 'duplicate' : 'saved';
@@ -167,10 +233,17 @@ export class PocketRepository {
   }
 
   async deleteEntry(entry) {
-    const tx = this.db.transaction(['entries', 'attachments'], 'readwrite');
-    tx.objectStore('entries').delete(entry.id);
-    if (entry.attachment?.id) tx.objectStore('attachments').delete(entry.attachment.id);
-    try { await transactionDone(tx); } catch (error) { throw storageError(error); }
+    const tx = this.db.transaction(['entries', 'attachments', 'meta'], 'readwrite');
+    const done = transactionDone(tx);
+    try {
+      await markDataRevision(tx);
+      tx.objectStore('entries').delete(entry.id);
+      if (entry.attachment?.id) tx.objectStore('attachments').delete(entry.attachment.id);
+      await done;
+    } catch (error) {
+      try { tx.abort(); } catch { /* already closed */ }
+      await done.catch(() => {}); throw storageError(error);
+    }
   }
 
   async getAttachment(id) {
@@ -182,13 +255,20 @@ export class PocketRepository {
 
   async importBundle(entries, attachmentBlobs = new Map()) {
     const values = entries.map(validatedEntry);
-    const tx = this.db.transaction(['entries', 'attachments'], 'readwrite');
-    for (const entry of values) {
-      tx.objectStore('entries').put(entry);
-      const blob = entry.attachment && attachmentBlobs.get(entry.attachment.id);
-      if (blob) tx.objectStore('attachments').put({ id: entry.attachment.id, blob });
+    const tx = this.db.transaction(['entries', 'attachments', 'meta'], 'readwrite');
+    const done = transactionDone(tx);
+    try {
+      await markDataRevision(tx);
+      for (const entry of values) {
+        tx.objectStore('entries').put(entry);
+        const blob = entry.attachment && attachmentBlobs.get(entry.attachment.id);
+        if (blob) tx.objectStore('attachments').put({ id: entry.attachment.id, blob });
+      }
+      await done;
+    } catch (error) {
+      try { tx.abort(); } catch { /* already closed */ }
+      await done.catch(() => {}); throw storageError(error);
     }
-    try { await transactionDone(tx); } catch (error) { throw storageError(error); }
     return values;
   }
 
