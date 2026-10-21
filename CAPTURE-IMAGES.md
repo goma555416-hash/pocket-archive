@@ -42,3 +42,7 @@ Drive 垃圾桶仍可能占使用者空間；由擁有者自行管理，App 不�
 4. 更新原捷徑（見 IOS-SHORTCUT.md），只用匿名圖片完成 UAT-V2.3.md。若圖片超過 4 MiB，改在 App 直接選圖，不能顯示收件成功。
 
 回滾：保留 URL-only 舊捷徑；停止圖片送出，先讓已安全收件工作入庫及同步。不可在仍有圖片 pending／leased 工作時回滾 Worker 至 v2.2：舊 claim API 不認識圖片，可能阻塞 URL 收件。緊急停用圖片時先保留 v2.3 Worker、將捷徑回到 URL-only；待圖片全部入庫／同步後才可停用 cron 並回滾 Worker。保留新增表及暫存 metadata，不 DROP 表、不刪原檔，回復 v2.3 後繼續清理。App 完整 ZIP 能保留原圖。不得為回滾重設金鑰、grant、舊 origin 資料或 migration ledger。
+
+## v2.3.2 分類呈現
+
+圖片收件／驗證／儲存流程不變；經既有 MIME、簽章、大小及 SHA-256 驗證的原圖，入庫為圖片／可靠判斷。舊附件 metadata 不能冒充本次重新讀過原檔，保守保留待確認。僅外部圖片 URL 或 og:image 縮圖不等於原檔已入 IndexedDB，卡片會標示未離線保存。本版不新增 migration，也不重新套用歷史 migration；前文 v2.3 新增 0004 的清單只屬歷史首次部署。

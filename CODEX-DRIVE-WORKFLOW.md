@@ -31,3 +31,7 @@
 5. 指令內完全缺少 App 驗證資訊、雜湊不符、檔案多於一份、metadata 不符、結果已非 pending、任何權限不足，均 **fail closed**。不得改選其他批次、搜尋 Notion、用外部附件補資料、重新建立結果檔或改動收藏。
 
 此機制不要求 Codex 連接器輸出本來就省略的欄位，並將 metadata 驗證放在能正確取得欄位的 App 端。它並非 Codex 對 `appProperties` 的獨立驗證；App 會在最終匯入時再驗證一次，**人仍需逐項勾選套用**。未經實機寫回與回讀測試，不可宣稱自動 Drive 整理通過。
+
+## v2.3.2 主題語意
+
+維持上方 export_id、schema v2、item ID、原 file ID、metadata、SHA-256 與回讀驗證。主要類型只保留圖片／影片／社群／網頁；主題輸出到 suggested_tags，不新增 AI 類型建議。舊 suggested_categories 仍可相容匯入並當作標籤候選；不覆寫人工類型、webpageKind 或原 category。此版本開發只用合成測試，不代表另行授權操作真實 Drive。

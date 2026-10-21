@@ -24,6 +24,12 @@ class AtomicFakeDatabase {
         const target = name === 'entries' ? stagedEntries : stagedAttachments;
         return {
           clear() { target.clear(); },
+          delete(id) { target.delete(id); },
+          getAll() {
+            const request = {};
+            queueMicrotask(() => { request.result = [...target.values()]; request.onsuccess?.(); });
+            return request;
+          },
           put(value) {
             if (name === 'attachments' && database.attachmentError) {
               tx.error = database.attachmentError;
@@ -39,7 +45,7 @@ class AtomicFakeDatabase {
         finished = true; queueMicrotask(() => tx.onabort?.());
       }
     };
-    queueMicrotask(() => {
+    setTimeout(() => {
       if (finished || tx.error) return;
       finished = true; database.entries = stagedEntries; database.attachments = stagedAttachments; tx.oncomplete?.();
     });
@@ -64,6 +70,17 @@ test('replaceBundle 在同一個 entries + attachments transaction 原子寫入'
   assert.deepEqual([...database.entries.keys()], [entry.id]);
   assert.equal(database.attachments.get(entry.attachment.id).blob, blob);
   assert.deepEqual(saved, [entry]);
+});
+
+test('讀取投影後新增另一筆，不會大量改寫歷史類型、未知欄位或原始標籤', async () => {
+  const raw = { id: 'unchanged-legacy', url: 'https://example.org/legacy', type: '工具', category: '舊分類', tags: ['原有'], createdAt: '2026-10-17T00:00:00Z', updatedAt: '2026-10-17T00:00:00Z', historicalField: '保留未知欄位' };
+  const { validatedEntry } = await import('../lib.mjs');
+  const database = new AtomicFakeDatabase({ entries: [raw] });
+  const repository = new PocketRepository(database);
+  const added = createEntry({ url: 'https://example.org/new' });
+  await repository.replaceBundle([validatedEntry(raw), added]);
+  assert.deepEqual(database.entries.get(raw.id), raw);
+  assert.equal(database.entries.get(added.id).type, '網頁');
 });
 
 test('replaceBundle 附件寫入錯誤時收藏紀錄與附件全部回滾', async () => {

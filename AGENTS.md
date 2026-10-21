@@ -11,3 +11,10 @@
 - Test in browser or automate where possible, explain any untested iOS device-only steps, keep a concise final manual UAT checklist. No claims of successful tests without executing them.
 
 - AI startup must follow the App’s batch-specific export_id. Read CODEX-DRIVE-WORKFLOW.md and CODEX-ORGANIZE-PROMPT.md first. Never search Notion or other private workspaces. Missing Drive raw JSON/ZIP download, in-place content update, or read-back capability is a fail-closed blocker; never substitute another source or create a replacement result file.
+
+## v2.3.2 content model and project skills
+
+- Read `CONTENT-MODEL.md` before changing types, tags, import/export or sync. The four presentation types are 圖片／影片／社群／網頁; topics belong in tags. Preserve manual classification and historical fields. Do not run bulk migrations on read. Keep schema v2 and the v2.3.1 AI handoff contract.
+- For collection forms, cards, mobile layout and interaction work, read [ui-ux-pro-max](.agents/skills/ui-ux-pro-max/SKILL.md); use its local search script with a focused UX domain query. Keep the existing vanilla JavaScript stack and `DESIGN-SPEC.md` brand decisions.
+- For UI implementation review, read [web-design-guidelines](.agents/skills/web-design-guidelines/SKILL.md), fetch its public guideline source, then review the affected HTML/CSS/JS for labels, keyboard/focus, feedback and responsive overflow. Resolve actionable findings within scope; do not force a framework, new palette or unrelated redesign.
+- Skills are project copies, not global installations or PWA runtime assets. Sources, license evidence, audit and actual usage: `UI-UX-REVIEW-V2.3.2.md`. Do not upload private content in skill searches.

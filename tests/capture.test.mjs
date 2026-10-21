@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { fetchHandler } from '../worker/src/index.mjs';
 import { bytesToBase64Url, sha256Text } from '../worker/src/security.mjs';
+import { receiveCaptureJob } from '../capture-client.mjs';
 
 let DatabaseSync;
 try { ({ DatabaseSync } = await import('node:sqlite')); } catch { /* Node 20: D1 integration test is skipped */ }
@@ -66,6 +67,40 @@ test('shortcut credential is least-privilege, rate-limited and queue leasing is 
   const recoveredClaim = await fetchHandler(new Request('https://app.example/api/capture/jobs/claim', { method: 'POST', headers: secondHeaders }), env);
   assert.equal((await recoveredClaim.json()).jobs[0].id, retryJobId, 'safe retry must preserve the capture job ID across devices');
   const recoveredAck = await fetchHandler(new Request(`https://app.example/api/capture/jobs/${retryJobId}/ack`, { method: 'POST', headers: secondHeaders, body: JSON.stringify({ status: 'completed', result: 'saved' }) }), env); assert.equal(recoveredAck.status, 200);
+
+  // Synthetic share → real Worker API → SQLite D1 queue → client commit → ack.
+  // No real platform fetch, Google Drive, D1 or iPhone is involved.
+  const mediaCredential = await fetchHandler(new Request('https://app.example/api/capture/credentials', { method: 'POST', headers: sessionHeaders, body: JSON.stringify({ name: '匿名來源測試' }) }), env);
+  const mediaToken = (await mediaCredential.json()).token;
+  const sources = [
+    ['https://youtube.com/watch?v=synthetic&si=share', '影片'],
+    ['https://youtube.com/shorts/synthetic', '影片'],
+    ['https://youtube.com/@synthetic', '網頁'],
+    ['https://instagram.com/reel/synthetic', '影片'],
+    ['https://instagram.com/p/synthetic', '社群'],
+    ['https://x.com/synthetic/status/123', '社群'],
+    ['https://threads.net/@synthetic/post/123', '社群'],
+    ['https://tiktok.com/@synthetic/video/123', '影片'],
+    ['https://pinterest.com/pin/123', '社群']
+  ];
+  const stored = new Map();
+  for (const [index, [url, expectedType]] of sources.entries()) {
+    const submit = () => fetchHandler(new Request('https://app.example/api/capture', { method: 'POST', headers: { Authorization: `Bearer ${mediaToken}`, 'Idempotency-Key': `synthetic-source-${index}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ url, text: `合成分享文字 ${url}` }) }), env);
+    const accepted = await submit(); assert.equal(accepted.status, 202);
+    const result = await accepted.json();
+    const duplicate = await submit(); assert.equal((await duplicate.json()).jobId, result.jobId);
+    const claimed = await fetchHandler(new Request('https://app.example/api/capture/jobs/claim', { method: 'POST', headers: sessionHeaders }), env);
+    const job = (await claimed.json()).jobs[0]; assert.equal(job.id, result.jobId);
+    const backend = { acknowledgeCaptureJob: async (id, status) => {
+      assert.ok(stored.has(id), 'commit precedes acknowledgement');
+      const ack = await fetchHandler(new Request(`https://app.example/api/capture/jobs/${id}/ack`, { method: 'POST', headers: sessionHeaders, body: JSON.stringify({ status: 'completed', result: status }) }), env);
+      assert.equal(ack.status, 200);
+    } };
+    await receiveCaptureJob(job, backend, { commitCapture: async entry => { stored.set(entry.id, entry); return 'saved'; } }, 'synthetic-device');
+    const entry = stored.get(result.jobId);
+    assert.equal(entry.type, expectedType); assert.equal(entry.originalUrl, url); assert.equal(entry.note, '合成分享文字');
+    assert.notEqual(entry.classification.status, 'manual'); assert.equal(entry.title, new URL(entry.url).hostname, 'missing metadata still saves');
+  }
 
   let limited;
   for (let index = 0; index < 28; index += 1) limited = await fetchHandler(new Request('https://app.example/api/capture', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Idempotency-Key': `rate-${String(index).padStart(4, '0')}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ url: `https://example.net/${index}` }) }), env);

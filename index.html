@@ -14,6 +14,7 @@
   <title>Pocket Archive — 個人收藏收件匣</title>
 </head>
 <body>
+  <a class="skip-link" href="#main-content">跳至收藏內容</a>
   <div class="app-layout">
     <aside class="sidebar" aria-label="主要導覽">
       <a class="brand" href="./" aria-label="Pocket Archive 首頁">
@@ -27,7 +28,7 @@
         <button class="nav-button" data-view="archived" type="button"><span>▤</span> 已封存 <b id="nav-count-archived">0</b></button>
         <button class="nav-button" data-view="all" type="button"><span>▦</span> 全部收藏 <b id="nav-count-all">0</b></button>
       </nav>
-      <div class="side-bottom"><p>收藏值得留下的，<br />其他的慢慢整理。</p><span class="version">LOCAL FIRST · V2.3.1</span></div>
+      <div class="side-bottom"><p>收藏值得留下的，<br />其他的慢慢整理。</p><span class="version">LOCAL FIRST · V2.3.2</span></div>
     </aside>
 
     <div class="workspace">
@@ -41,7 +42,7 @@
         </div>
       </header>
 
-      <main class="main-content">
+      <main class="main-content" id="main-content" tabindex="-1">
         <section class="hero" aria-labelledby="page-heading">
           <div><div class="eyebrow"><span class="eyebrow-line"></span> A PLACE FOR ALL YOUR FINDS</div><h1 id="page-heading">今天，<em>收藏了什麼？</em></h1><p>網址、社群貼文與圖片先放進來，之後再慢慢整理。</p></div>
           <div class="hero-actions">
@@ -73,13 +74,13 @@
         <section class="collection-section" aria-label="收藏內容">
           <div class="section-heading"><div><div class="eyebrow subtle">YOUR LIBRARY</div><h2 id="list-title">收件匣 <small id="result-count">0</small></h2></div><span id="filter-caption">尚未整理的收藏</span></div>
           <div class="toolbar">
-            <label class="search-wrap" for="search-input"><span aria-hidden="true">⌕</span><input id="search-input" type="search" placeholder="搜尋標題、分類、標籤、網址或備註…" autocomplete="off" /><kbd>/</kbd></label>
-            <label class="select-wrap"><span class="sr-only">依類型篩選</span><select id="type-filter"><option value="all">所有類型</option><option>文章</option><option>影片</option><option>社群貼文</option><option>圖片</option><option>遊戲</option><option>香水</option><option>工具</option><option>其他</option></select></label>
+            <label class="search-wrap" for="search-input"><span class="sr-only">搜尋收藏</span><span aria-hidden="true">⌕</span><input id="search-input" type="search" placeholder="搜尋標題、標籤、網址或備註…" autocomplete="off" /><kbd>/</kbd></label>
+            <label class="select-wrap"><span class="sr-only">依類型篩選</span><select id="type-filter"><option value="all">所有類型</option><option>圖片</option><option>影片</option><option>社群</option><option>網頁</option></select></label>
             <label class="select-wrap"><span class="sr-only">排序方式</span><select id="sort-filter"><option value="new">最新收藏</option><option value="old">最早收藏</option><option value="title">標題 A–Z</option><option value="starred">星號優先</option></select></label>
           </div>
           <div id="selection-bar" class="selection-bar" hidden>
             <strong><span id="selection-count">0</span> 筆已選</strong>
-            <button type="button" data-bulk="saved">標記已整理</button><button type="button" data-bulk="archived">封存</button><button type="button" data-bulk="star">切換星號</button><button type="button" id="bulk-edit-button">分類／標籤</button><button type="button" id="selection-clear">取消選取</button>
+            <button type="button" data-bulk="saved">標記已整理</button><button type="button" data-bulk="archived">封存</button><button type="button" data-bulk="star">切換星號</button><button type="button" id="bulk-edit-button">附加標籤</button><button type="button" id="selection-clear">取消選取</button>
           </div>
           <div class="select-all-row"><label><input type="checkbox" id="select-visible" /> 選取目前結果</label></div>
           <div id="cards" class="cards-grid" aria-live="polite"></div>
@@ -96,15 +97,19 @@
 
   <dialog id="entry-dialog" aria-labelledby="dialog-heading">
     <form id="entry-form" class="entry-form">
-      <div class="modal-heading"><div><div class="eyebrow subtle">KEEP WHAT MATTERS</div><h2 id="dialog-heading">新增收藏</h2></div><button type="button" data-close="entry-dialog" class="icon-button" aria-label="關閉">✕</button></div>
+      <div class="modal-heading"><div><div class="eyebrow subtle">KEEP WHAT MATTERS</div><h2 id="dialog-heading" tabindex="-1">新增收藏</h2></div><button type="button" data-close="entry-dialog" class="icon-button" aria-label="關閉">✕</button></div>
       <input type="hidden" id="entry-id" />
       <input type="hidden" id="entry-preview-url" />
-      <label>收藏網址 <span>*</span><div class="url-entry"><input type="url" id="entry-url" inputmode="url" placeholder="https://example.com/…" required /><button type="button" id="paste-url">貼上</button></div></label>
+      <label>收藏網址 <span>*</span><div class="url-entry"><input type="url" id="entry-url" name="url" autocomplete="off" aria-describedby="entry-error" inputmode="url" placeholder="https://example.com/…" required /><button type="button" id="paste-url">貼上</button></div></label>
       <button type="button" id="fetch-title" class="inline-help">在網站允許 CORS 時嘗試讀取標題</button>
       <label>標題 <small>選填；留白將使用網站網域</small><input type="text" id="entry-title" maxlength="160" /></label>
-      <div class="form-row"><label>類型<select id="entry-type"><option>文章</option><option>影片</option><option>社群貼文</option><option>圖片</option><option>遊戲</option><option>香水</option><option>工具</option><option>其他</option></select></label><label>狀態<select id="entry-status"><option value="inbox">待整理</option><option value="saved">已整理</option><option value="archived">已封存</option></select></label></div>
-      <label>分類 <small>例如：工作參考</small><input type="text" id="entry-category" maxlength="80" /></label>
-      <label>標籤 <small>使用逗號分隔，可跨分類</small><input type="text" id="entry-tags" maxlength="600" /></label>
+      <div class="form-row"><label>類型<select id="entry-type" aria-describedby="entry-classification"><option>圖片</option><option>影片</option><option>社群</option><option>網頁</option></select></label><label>狀態<select id="entry-status"><option value="inbox">待整理</option><option value="saved">已整理</option><option value="archived">已封存</option></select></label></div>
+      <p id="entry-classification" class="privacy-note" role="status"></p>
+      <div class="type-actions"><button id="confirm-type" type="button" class="inline-help">確認目前類型</button><button id="auto-type" type="button" class="inline-help">重新自動判斷</button></div>
+      <label id="entry-webpage-kind-row">內容形式 <small>保存網站入口，不下載整站</small><select id="entry-webpage-kind"><option value="">尚未判斷</option><option value="article">文章</option><option value="site">網站</option><option value="other">一般網頁</option></select></label>
+      <label>標籤 <small id="entry-tags-help">逗號分隔；最多 24 個，每個 32 字</small><textarea id="entry-tags" name="tags" autocomplete="off" aria-describedby="entry-tags-help entry-error" rows="2"></textarea></label>
+      <details id="entry-legacy" hidden><summary>舊分類相容資訊</summary><p id="entry-legacy-info" class="privacy-note"></p><label>原有分類（保留）<input type="text" id="entry-category" readonly /></label></details>
+      <p id="entry-error" class="error-note" role="alert" tabindex="-1" hidden></p>
       <label>備註 <small>原始備註不會被 Codex 建議覆寫</small><textarea id="entry-note" rows="3" maxlength="5000"></textarea></label>
       <label class="check-label"><input id="entry-starred" type="checkbox" /> 加上星號</label>
       <div class="modal-footer"><button type="button" data-close="entry-dialog" class="button ghost">取消</button><button class="button primary" type="submit" id="save-button">儲存收藏 →</button></div>
@@ -187,7 +192,7 @@
   </dialog>
 
   <dialog id="bulk-dialog" aria-labelledby="bulk-heading">
-    <form class="entry-form" id="bulk-form"><div class="modal-heading"><h2 id="bulk-heading">批次分類與標籤</h2><button type="button" data-close="bulk-dialog" class="icon-button" aria-label="關閉">✕</button></div><label>分類 <small>留白則不變更</small><input id="bulk-category" maxlength="80" /></label><label>附加標籤 <small>不會移除既有標籤</small><input id="bulk-tags" maxlength="600" /></label><div class="modal-footer"><button type="button" data-close="bulk-dialog" class="button ghost">取消</button><button class="button primary" type="submit">套用</button></div></form>
+    <form class="entry-form" id="bulk-form"><div class="modal-heading"><h2 id="bulk-heading">批次附加標籤</h2><button type="button" data-close="bulk-dialog" class="icon-button" aria-label="關閉">✕</button></div><label>附加標籤 <small>逗號分隔；不會移除既有標籤，任一筆超限則整批保留原狀</small><input id="bulk-tags" /></label><p id="bulk-error" class="error-note" role="alert" tabindex="-1" hidden></p><div class="modal-footer"><button type="button" data-close="bulk-dialog" class="button ghost">取消</button><button class="button primary" type="submit">套用</button></div></form>
   </dialog>
 
   <dialog id="confirm-dialog" aria-labelledby="confirm-heading" class="wide-dialog"><div class="entry-form"><div class="modal-heading"><h2 id="confirm-heading">匯入預覽</h2><button type="button" data-close="confirm-dialog" class="icon-button" aria-label="關閉">✕</button></div><div id="confirm-content" class="preview-panel"></div><div class="modal-footer"><button type="button" data-close="confirm-dialog" class="button ghost">取消</button><button id="confirm-import" type="button" class="button primary">確認匯入</button></div></div></dialog>

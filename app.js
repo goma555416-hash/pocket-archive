@@ -1,8 +1,9 @@
 import { receiveCaptureJob, imageDimensions } from './capture-client.mjs';
+import { classifyContent, WEBPAGE_KINDS, inputTags, mergeTopicTags, compatibilityPending } from './content-model.mjs';
 import { codexLaunchCommand, cloudAiJobForReview } from './ai-launch.mjs';
 import { createImageViewer } from './image-viewer.mjs';
 import {
-  TYPES, ALLOWED_IMAGE_TYPES, MAX_IMAGE_BYTES, cleanTags, normalizeUrl, displayHost, inferType,
+  ALLOWED_IMAGE_TYPES, MAX_IMAGE_BYTES, normalizeUrl, displayHost,
   validatedEntry, createEntry, createCaptureEntry, createImageEntry, parseBatchUrls, readBackup, createBackupEnvelope,
   previewMerge, createInboxEnvelope, readOrganized, applySuggestions, restoreSnapshot, matchesEntry,
   escapeHtml, sha256, hasValidImageSignature, makeId
@@ -26,7 +27,7 @@ const state = {
   cloudUser: null, cloudBusy: false, backupTimer: null, syncTimer: null,
   backend: null, backendAvailable: false, backendOwner: null, backendSession: null, backendSessions: [],
   captureCredentials: [], captureBusy: false, localWriteBusy: 0, activeAiExportId: '',
-  googleIdentityStatus: 'idle', googleIdentityPromise: null
+  googleIdentityStatus: 'idle', googleIdentityPromise: null, editorDecision: null, editorUrl: ''
 };
 const names = { inbox: ['收件匣', '尚未整理的收藏'], saved: ['已整理', '已經整理好的收藏'], archived: ['已封存', '暫時收起的收藏'], all: ['全部收藏', '這裡收著所有值得留下的事物'] };
 let toastTimer; let toastPopoverTimer; let thumbnailGeneration = 0;
@@ -105,17 +106,20 @@ function cardHtml(entry) {
   const id = escapeHtml(entry.id);
   const title = escapeHtml(entry.title);
   const targetTitle = entry.kind === 'link' ? `<a href="${escapeHtml(entry.url)}" target="_blank" rel="noopener noreferrer">${title}</a>` : title;
-  const source = entry.kind === 'link' ? `↗ ${displayHost(entry.url)}` : `圖片 · ${friendlyBytes(entry.attachment?.size || 0)}`;
+  const source = entry.kind === 'link' ? `↗ ${displayHost(entry.url)}${entry.type === '圖片' || entry.previewUrl ? ' · 外部圖片連結，未離線保存' : ''}` : `原圖已存於本機 · ${friendlyBytes(entry.attachment?.size || 0)}`;
   const media = entry.attachment ? `<button type="button" class="card-media original-preview" data-view-image="${id}" aria-label="檢視原圖：${title}"><span class="image-placeholder">載入圖片…</span><img data-attachment-id="${escapeHtml(entry.attachment.id)}" alt="" hidden /></button>` : entry.previewUrl ? `<div class="card-media"><img src="${escapeHtml(entry.previewUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" /></div>` : '';
   const note = entry.note ? `<p class="card-note">${escapeHtml(entry.note)}</p>` : '';
   const summary = entry.aiSuggestion?.summary ? `<p class="ai-summary"><strong>Codex 建議</strong>${escapeHtml(entry.aiSuggestion.summary)}</p>` : '';
   const tags = entry.tags.length ? entry.tags.map(tag => `<span class="tag"># ${escapeHtml(tag)}</span>`).join('') : '<span class="tag">尚未標籤</span>';
-  const category = entry.category ? `<span class="category-label">${escapeHtml(entry.category)}</span>` : '';
+  const detail = entry.type === '網頁' && WEBPAGE_KINDS[entry.webpageKind] ? `<span class="content-detail">${WEBPAGE_KINDS[entry.webpageKind]}</span>` : '';
+  const confirmation = entry.classification.status === 'provisional' ? '<span class="confirmation-label">待確認</span>' : entry.classification.status === 'manual' ? '<span class="content-detail">手動確認</span>' : '';
+  const pending = compatibilityPending(entry);
+  const compatibility = pending.length ? `<p class="compatibility-note">舊分類或 AI 標籤尚未轉入，原值已保留；可在編輯中整理標籤後補入：${escapeHtml(pending.join('、'))}</p>` : '';
   const date = new Date(entry.createdAt).toLocaleDateString('zh-TW', { year: 'numeric', month: 'short', day: 'numeric' });
   const statusAction = entry.status === 'inbox' ? `<button class="text-action" data-action="saved" data-id="${id}">✓ 已整理</button>` : entry.status === 'archived' ? `<button class="text-action" data-action="inbox" data-id="${id}">還原</button>` : `<button class="text-action" data-action="archived" data-id="${id}">封存</button>`;
   return `<article class="item-card${entry.starred ? ' is-starred' : ''}">
-    <div class="card-head"><label class="card-select"><input type="checkbox" data-select-id="${id}" ${state.selected.has(entry.id) ? 'checked' : ''} /><span class="sr-only">選取 ${title}</span></label><span class="category" data-type="${escapeHtml(entry.type)}">${escapeHtml(entry.type)}</span>${category}<button class="star-button" type="button" data-action="star" data-id="${id}" aria-label="${entry.starred ? '移除' : '加上'}星號">${entry.starred ? '★' : '☆'}</button></div>
-    ${media}<div class="card-body"><div class="card-host">${escapeHtml(source)}</div><h3 class="card-title">${targetTitle}</h3>${note}${summary}</div><div class="card-tags">${tags}</div>
+    <div class="card-head"><label class="card-select"><input type="checkbox" data-select-id="${id}" ${state.selected.has(entry.id) ? 'checked' : ''} /><span class="sr-only">選取 ${title}</span></label><span class="category" data-type="${escapeHtml(entry.type)}">${escapeHtml(entry.type)}</span>${detail}${confirmation}<button class="star-button" type="button" data-action="star" data-id="${id}" aria-label="${entry.starred ? '移除' : '加上'}星號">${entry.starred ? '★' : '☆'}</button></div>
+    ${media}<div class="card-body"><div class="card-host">${escapeHtml(source)}</div><h3 class="card-title">${targetTitle}</h3>${note}${summary}${compatibility}</div><div class="card-tags">${tags}</div>
     <div class="card-footer"><span class="card-date">${escapeHtml(date)}</span><div class="card-actions">${statusAction}<button class="text-action" data-action="edit" data-id="${id}">編輯</button><button class="text-action danger" data-action="delete" data-id="${id}">刪除</button></div></div>
   </article>`;
 }
@@ -127,7 +131,7 @@ async function loadThumbnails() {
     try {
       const blob = await state.repository.getAttachment(image.dataset.attachmentId);
       if (generation !== thumbnailGeneration || !image.isConnected) return;
-      if (!blob) { image.previousElementSibling.textContent = '附件遺失 · 點擊查看說明'; return; }
+      if (!blob) { image.previousElementSibling.textContent = '附件遺失 · 點擊查看說明'; image.closest('.item-card').querySelector('.card-host').textContent = '本機原圖遺失 · 請從完整 ZIP 還原'; return; }
       const url = URL.createObjectURL(blob); state.thumbnailUrls.push(url);
       image.onload = () => { image.hidden = false; image.previousElementSibling.hidden = true; };
       image.onerror = () => { image.hidden = true; image.previousElementSibling.hidden = false; image.previousElementSibling.textContent = '無法預覽 · 點擊下載原檔'; };
@@ -192,41 +196,73 @@ function openEditor(entry = null, incoming = null) {
   urlLabel.hidden = isImage; $('#fetch-title').hidden = isImage; $('#entry-url').required = !isImage;
   $('#entry-id').value = entry?.id || '';
   $('#entry-preview-url').value = entry?.previewUrl || '';
-  $('#entry-url').value = entry?.url || incoming?.url || '';
+  $('#entry-url').value = entry?.originalUrl || entry?.url || incoming?.url || '';
+  state.editorUrl = $('#entry-url').value;
+  state.editorDecision = entry ? { type: entry.type, classification: entry.classification } : classifyContent({ url: state.editorUrl });
   $('#entry-title').value = entry?.title || incoming?.title || '';
   $('#entry-note').value = entry?.note || incoming?.note || '';
   $('#entry-category').value = entry?.category || '';
   $('#entry-tags').value = entry?.tags.join(', ') || '';
-  $('#entry-type').value = entry?.type || (incoming?.url ? inferType(incoming.url) : '文章');
+  $('#entry-type').value = state.editorDecision.type;
+  $('#entry-webpage-kind').value = entry?.webpageKind || '';
+  $('#entry-legacy').hidden = !entry?.legacyType && !entry?.category;
+  $('#entry-legacy-info').textContent = `原有類型：${entry?.legacyType || '無'}。舊分類與原有標籤完整保留；超限時請先整理標籤。`;
+  $('#entry-error').hidden = true;
+  renderEditorType();
   $('#entry-status').value = entry?.status || 'inbox'; $('#entry-starred').checked = Boolean(entry?.starred);
   $('#dialog-heading').textContent = entry ? (isImage ? '編輯圖片資料' : '編輯收藏') : '新增收藏';
   $('#save-button').textContent = entry ? '儲存變更 →' : '儲存收藏 →';
-  openDialog('entry-dialog'); setTimeout(() => (isImage || incoming?.url || entry?.url ? $('#entry-title') : $('#entry-url')).focus(), 0);
+  openDialog('entry-dialog');
+  if (matchMedia('(pointer: fine)').matches) (isImage || incoming?.url || entry?.url ? $('#entry-title') : $('#entry-url')).focus();
+  else $('#dialog-heading').focus();
+}
+
+function renderEditorType() {
+  $('#entry-webpage-kind-row').hidden = $('#entry-type').value !== '網頁';
+  const status = state.editorDecision.classification.status;
+  $('#entry-classification').textContent = status === 'manual' ? '手動確認 · 重新載入、AI 整理與同步會保留此選擇' : status === 'verified' ? '可靠判斷 · 根據媒體網址結構或已驗證的原始圖片' : '待確認 · 目前證據不足，請確認實際內容後選擇類型';
+}
+
+function refreshEditorType(force = false) {
+  if (!force && state.editorDecision?.classification.status === 'manual') return;
+  if (!force && state.editorUrl === $('#entry-url').value) return;
+  state.editorUrl = $('#entry-url').value;
+  const current = state.entries.find(entry => entry.id === $('#entry-id').value);
+  state.editorDecision = classifyContent({ url: state.editorUrl, validatedImage: current?.classification.evidence === 'validated-image' });
+  $('#entry-type').value = state.editorDecision.type; renderEditorType();
+}
+
+function confirmEditorType() {
+  state.editorDecision = classifyContent({ manualType: $('#entry-type').value });
+  renderEditorType();
 }
 
 async function saveFromForm(event) {
   event.preventDefault();
   const id = $('#entry-id').value;
   const current = id ? state.entries.find(entry => entry.id === id) : null;
-  const fields = { title: $('#entry-title').value, note: $('#entry-note').value, type: $('#entry-type').value, category: $('#entry-category').value, status: $('#entry-status').value, tags: cleanTags($('#entry-tags').value), starred: $('#entry-starred').checked, previewUrl: $('#entry-preview-url').value };
   let entry;
   try {
+    refreshEditorType();
+    const fields = { title: $('#entry-title').value, note: $('#entry-note').value, ...state.editorDecision, webpageKind: $('#entry-webpage-kind').value, status: $('#entry-status').value, tags: inputTags($('#entry-tags').value, current?.tags), starred: $('#entry-starred').checked, previewUrl: $('#entry-preview-url').value };
     if (current?.kind === 'image') entry = validatedEntry({ ...current, ...fields, updatedAt: new Date().toISOString() });
     else {
       const url = normalizeUrl($('#entry-url').value);
       const duplicate = state.entries.find(item => item.normalizedUrl === url && item.id !== id);
       if (duplicate) throw new Error('這個網址已收藏過，請直接編輯原有收藏');
-      entry = current ? validatedEntry({ ...current, ...fields, url, originalUrl: $('#entry-url').value, updatedAt: new Date().toISOString() }) : createEntry({ ...fields, url, originalUrl: $('#entry-url').value });
+      entry = current ? validatedEntry({ ...current, ...fields, url, normalizedUrl: url, originalUrl: $('#entry-url').value, updatedAt: new Date().toISOString() }) : createEntry({ ...fields, url, originalUrl: $('#entry-url').value });
     }
-  } catch (error) { toast(error.message); return; }
+  } catch (error) { $('#entry-error').textContent = error.message; $('#entry-error').hidden = false; $('#entry-error').focus(); toast(error.message); return; }
   const next = current ? state.entries.map(item => item.id === id ? entry : item) : [entry, ...state.entries];
-  if (await persistEntries(next, current ? '收藏已更新 ✓' : '已收入 Pocket Archive ✓')) closeDialog('entry-dialog');
+  $('#save-button').disabled = true;
+  try { if (await persistEntries(next, current ? '收藏已更新 ✓' : '已收入 Pocket Archive ✓')) closeDialog('entry-dialog'); }
+  finally { $('#save-button').disabled = false; }
 }
 
 async function updateEntries(ids, updater, message) {
   const selected = new Set(ids); const now = new Date().toISOString();
   const next = state.entries.map(entry => selected.has(entry.id) ? validatedEntry({ ...updater(entry), updatedAt: now }) : entry);
-  await persistEntries(next, message);
+  return persistEntries(next, message);
 }
 
 async function deleteEntry(id) {
@@ -247,7 +283,7 @@ function previewBatch() {
 
 async function saveBatch(event) {
   event.preventDefault(); previewBatch();
-  const entries = state.batch.filter(row => row.status === 'valid').map(row => createEntry({ url: row.normalizedUrl, originalUrl: row.input, type: row.type }));
+  const entries = state.batch.filter(row => row.status === 'valid').map(row => createEntry({ url: row.normalizedUrl, originalUrl: row.input }));
   try { if (await persistEntries([...entries, ...state.entries])) { closeDialog('batch-dialog'); toast(`已加入 ${entries.length} 筆，錯誤與重複項目已略過 ✓`); } }
   catch (error) { toast(error.message, 6500); }
 }
@@ -454,7 +490,12 @@ function showSuggestionPreview(result) {
   state.pendingSuggestions = result;
   const byId = new Map(state.entries.map(entry => [entry.id, entry]));
   const { accepted, rejected } = result;
-  $('#ai-preview').innerHTML = `<p class="preview-summary"><strong>${accepted.length} 筆可預覽</strong> · ${rejected.length} 筆拒絕</p><ul class="suggestion-list">${accepted.map(item => `<li><label><input type="checkbox" data-suggestion-id="${escapeHtml(item.id)}" checked /><span><b>${escapeHtml(byId.get(item.id)?.title || item.id)}</b><small>${escapeHtml(item.categories.join('、') || '分類不變')} · ${escapeHtml(item.tags.join('、') || '無新標籤')} · 信心 ${escapeHtml(item.confidence)}</small><em>${escapeHtml(item.summary || item.reason || '無摘要')}</em></span></label></li>`).join('')}</ul>${rejected.length ? `<p class="error-note">${rejected.length} 筆因未知 ID 或欄位錯誤不會套用。</p>` : ''}`;
+  $('#ai-preview').innerHTML = `<p class="preview-summary"><strong>${accepted.length} 筆可預覽</strong> · ${rejected.length} 筆拒絕</p><p>只合併主題標籤；類型、內容形式與舊分類保留。</p><ul class="suggestion-list">${accepted.map(item => {
+    const entry = byId.get(item.id);
+    const merged = mergeTopicTags(entry.tags, [...item.categories, ...item.tags]);
+    const added = merged.tags.filter(tag => !entry.tags.includes(tag));
+    return `<li><label><input type="checkbox" data-suggestion-id="${escapeHtml(item.id)}" checked /><span><b>${escapeHtml(entry.title)}</b><small>現有標籤：${escapeHtml(entry.tags.join('、') || '無')} → 新增：${escapeHtml(added.join('、') || '無')} · ${item.analysisStatus === 'insufficient_data' ? '資料不足' : '已分析'} · 信心 ${escapeHtml(item.confidence)}</small>${merged.pending.length ? `<small class="error-note">超過上限，保留於 AI 建議、不加入標籤：${escapeHtml(merged.pending.join('、'))}</small>` : ''}<em>${escapeHtml(item.summary || item.reason || '無摘要')}</em></span></label></li>`;
+  }).join('')}</ul>${rejected.length ? `<p class="error-note">${rejected.length} 筆因未知 ID 或欄位錯誤不會套用。</p>` : ''}`;
   $('#apply-ai').hidden = accepted.length === 0;
 }
 
@@ -495,8 +536,18 @@ async function fetchTitle() {
     const response = await fetch(url, { signal: controller.signal, credentials: 'omit', referrerPolicy: 'no-referrer' });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const text = (await response.text()).slice(0, 2_000_000); const documentHtml = new DOMParser().parseFromString(text, 'text/html');
+    if ($('#entry-url').value.trim() !== url && normalizeUrl($('#entry-url').value) !== url) return;
     const title = documentHtml.querySelector('meta[property="og:title"]')?.content || documentHtml.title;
-    if (!title?.trim()) throw new Error('頁面沒有可讀標題'); $('#entry-title').value = title.trim().slice(0, 160); toast('已讀取公開頁面標題');
+    if (title?.trim()) $('#entry-title').value = title.trim().slice(0, 160);
+    if (state.editorDecision.classification.status !== 'manual' && (!response.url || response.url === url)) {
+      const ogType = documentHtml.querySelector('meta[property="og:type"]')?.content;
+      // Multiple primary media declarations are ambiguous (carousel/mixed).
+      const media = [...documentHtml.querySelectorAll('meta[property="og:video"],meta[property="og:video:url"],meta[property="og:image"]')];
+      const urls = [...new Set(media.filter(node => ogType === 'image' ? node.getAttribute('property') === 'og:image' : node.getAttribute('property').startsWith('og:video')).map(node => node.content))];
+      state.editorDecision = classifyContent({ url, metadata: { pageUrl: url, ogType, mediaUrl: urls[0], mixed: urls.length !== 1 } });
+      $('#entry-type').value = state.editorDecision.type; renderEditorType();
+    }
+    toast(title?.trim() ? '已讀取公開頁面標題；請確認內容形式' : '沒有可讀標題；仍可保存網址');
     const image = documentHtml.querySelector('meta[property="og:image"]')?.content;
     if (image) { try { $('#entry-preview-url').value = normalizeUrl(new URL(image, url).href); } catch { /* invalid preview URL */ } }
   } catch { toast('網站未允許跨來源讀取；仍可保存網址並手動填寫標題'); }
@@ -927,7 +978,11 @@ function bindEvents() {
   });
   $('#entry-form').addEventListener('submit', saveFromForm); $('#batch-form').addEventListener('submit', saveBatch); $('#image-form').addEventListener('submit', event => localEntryMutation(() => saveImages(event)));
   $('#image-form').addEventListener('submit', event => event.preventDefault());
-  $('#paste-url').addEventListener('click', async () => { try { $('#entry-url').value = (await navigator.clipboard.readText()).trim(); } catch { toast('剪貼簿無法讀取，請手動貼上'); } });
+  $('#entry-url').addEventListener('input', () => refreshEditorType());
+  $('#entry-type').addEventListener('change', confirmEditorType);
+  $('#confirm-type').addEventListener('click', confirmEditorType);
+  $('#auto-type').addEventListener('click', () => refreshEditorType(true));
+  $('#paste-url').addEventListener('click', async () => { try { $('#entry-url').value = (await navigator.clipboard.readText()).trim(); refreshEditorType(); } catch { toast('剪貼簿無法讀取，請手動貼上'); } });
   $('#paste-inbox').addEventListener('click', readClipboardToBatch); $('#fetch-title').addEventListener('click', fetchTitle); $('#batch-preview-button').addEventListener('click', previewBatch); $('#batch-text').addEventListener('input', previewBatch);
   $('#image-files').addEventListener('change', event => prepareImages(event.target.files));
   const drop = $('#drop-zone'); ['dragenter', 'dragover'].forEach(name => drop.addEventListener(name, event => { event.preventDefault(); drop.classList.add('is-dragging'); })); ['dragleave', 'drop'].forEach(name => drop.addEventListener(name, event => { event.preventDefault(); drop.classList.remove('is-dragging'); })); drop.addEventListener('drop', event => prepareImages(event.dataTransfer.files));
@@ -950,7 +1005,19 @@ function bindEvents() {
   $('#search-input').addEventListener('input', event => { state.query = event.target.value.trim(); render(); }); $('#type-filter').addEventListener('change', event => { state.type = event.target.value; render(); }); $('#sort-filter').addEventListener('change', event => { state.sort = event.target.value; render(); });
   $('#select-visible').addEventListener('change', event => { filteredEntries().forEach(entry => event.target.checked ? state.selected.add(entry.id) : state.selected.delete(entry.id)); render(); }); $('#selection-clear').addEventListener('click', () => { state.selected.clear(); render(); });
   $$('[data-bulk]').forEach(button => button.addEventListener('click', () => { const ids = [...state.selected]; const action = button.dataset.bulk; if (action === 'star') updateEntries(ids, entry => ({ ...entry, starred: !entry.starred }), '已切換星號'); else updateEntries(ids, entry => ({ ...entry, status: action }), '批次狀態已更新'); }));
-  $('#bulk-edit-button').addEventListener('click', () => { $('#bulk-form').reset(); openDialog('bulk-dialog'); }); $('#bulk-form').addEventListener('submit', async event => { event.preventDefault(); const category = $('#bulk-category').value.trim(); const tags = cleanTags($('#bulk-tags').value); await updateEntries([...state.selected], entry => ({ ...entry, category: category || entry.category, tags: cleanTags([...entry.tags, ...tags]) }), '批次分類與標籤已更新'); closeDialog('bulk-dialog'); });
+  $('#bulk-edit-button').addEventListener('click', () => { $('#bulk-form').reset(); $('#bulk-error').hidden = true; openDialog('bulk-dialog'); });
+  $('#bulk-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    try {
+      const tags = inputTags($('#bulk-tags').value);
+      const saved = await updateEntries([...state.selected], entry => {
+        const merged = mergeTopicTags(entry.tags, tags);
+        if (merged.pending.length) throw new Error(`「${entry.title}」超過標籤上限，請先整理；本次整批未變更。`);
+        return { ...entry, tags: merged.tags };
+      }, '批次標籤已更新');
+      if (saved) closeDialog('bulk-dialog');
+    } catch (error) { $('#bulk-error').textContent = error.message; $('#bulk-error').hidden = false; $('#bulk-error').focus(); }
+  });
   document.addEventListener('change', event => { const input = event.target.closest('[data-select-id]'); if (!input) return; input.checked ? state.selected.add(input.dataset.selectId) : state.selected.delete(input.dataset.selectId); render(); });
   document.addEventListener('click', event => {
     const revokeCaptureButton = event.target.closest('[data-revoke-capture]'); if (revokeCaptureButton) { state.backend.revokeCaptureCredential(revokeCaptureButton.dataset.revokeCapture).then(() => { toast('快捷收藏憑證已撤銷'); return refreshCaptureCredentials(); }).catch(error => toast(`撤銷失敗：${error.message}`, 8000)); return; }

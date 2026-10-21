@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -78,8 +78,7 @@ try {
     document.querySelector('#new-button').click();
     document.querySelector('#entry-url').value='https://example.com/new?utm_source=e2e';
     document.querySelector('#entry-title').value='E2E 新收藏';
-    document.querySelector('#entry-category').value='測試分類';
-    document.querySelector('#entry-tags').value='測試, 自動化';
+    document.querySelector('#entry-tags').value='測試分類, 測試, 自動化';
     document.querySelector('#entry-form').requestSubmit();
   })()`);
   await waitFor(() => cdp.evaluate("[...document.querySelectorAll('.card-title')].some(n=>n.textContent.includes('E2E 新收藏'))"), '單筆新增');
@@ -301,6 +300,105 @@ try {
   assert.deepEqual(atomicRollback.tombstones, { retained: true }, 'transaction abort 後 tombstone metadata 也必須回滾');
   process.stdout.write('E2E：IndexedDB 收藏、附件與同步 metadata 原子回滾通過\n');
 
+  // v2.3.2 UI workflows: actual forms, repository persistence, no platform access.
+  await cdp.evaluate(`(() => {
+    document.querySelectorAll('dialog[open]').forEach(d=>d.close());
+    document.querySelector('[data-view=all]').click();
+    document.querySelector('#new-button').click();
+    const input=document.querySelector('#entry-url'); input.value='https://example.org/resource/portal'; input.dispatchEvent(new Event('input',{bubbles:true}));
+    document.querySelector('#entry-title').value='V232 網站入口 '+ '長標題'.repeat(35);
+    document.querySelector('#entry-webpage-kind').value='site';
+    document.querySelector('#entry-tags').value='網站工具, <img src=x onerror=alert(1)>';
+    document.querySelector('#confirm-type').click();
+    document.querySelector('#entry-form').requestSubmit();
+  })()`);
+  await waitFor(() => cdp.evaluate("!document.querySelector('#entry-dialog').open"), 'v232 網站收藏');
+  assert.equal(await cdp.evaluate("[...document.querySelectorAll('.item-card')].find(c=>c.textContent.includes('V232 網站入口')).textContent.includes('網站')"), true);
+  assert.equal(await cdp.evaluate("document.querySelectorAll('.card-tags img').length"), 0, '標籤不可插入 HTML');
+  await cdp.evaluate("[...document.querySelectorAll('.item-card')].find(c=>c.textContent.includes('V232 網站入口')).querySelector('[data-action=edit]').click()");
+  assert.equal(await cdp.evaluate("document.querySelector('#entry-type').value"), '網頁');
+  assert.equal(await cdp.evaluate("document.querySelector('#entry-webpage-kind').value"), 'site');
+  assert.ok(await cdp.evaluate("document.querySelector('#entry-classification').textContent.includes('手動確認')"));
+  await cdp.evaluate("document.querySelector('#entry-type').value='影片'; document.querySelector('#entry-type').dispatchEvent(new Event('change',{bubbles:true}))");
+  assert.ok(await cdp.evaluate("document.querySelector('#entry-webpage-kind-row').hidden"));
+  await cdp.evaluate("document.querySelector('#auto-type').click()");
+  assert.equal(await cdp.evaluate("document.querySelector('#entry-type').value"), '網頁');
+  assert.ok(await cdp.evaluate("document.querySelector('#entry-classification').textContent.includes('待確認')"));
+  assert.equal(await cdp.evaluate("document.querySelector('#entry-webpage-kind').value"), 'site', '切換主要類型不丟已選細分');
+  await cdp.evaluate("document.querySelector('#confirm-type').click()");
+  await cdp.evaluate(`(() => {
+    document.querySelector('#entry-tags').value=Array.from({length:25},(_,i)=>'tag'+i).join(',');
+    document.querySelector('#entry-form').requestSubmit();
+  })()`);
+  await waitFor(() => cdp.evaluate("!document.querySelector('#entry-error').hidden"), '標籤超限拒絕');
+  assert.equal(await cdp.evaluate("document.activeElement.id"), 'entry-error');
+  await cdp.evaluate("document.querySelector('#entry-tags').value=Array.from({length:24},(_,i)=>'tag'+i).join(','); document.querySelector('#entry-form').requestSubmit()");
+  await waitFor(() => cdp.evaluate("!document.querySelector('#entry-dialog').open"), '24 個標籤可完整儲存');
+
+  await cdp.evaluate(`(() => {
+    document.querySelector('#batch-button').click();
+    const input=document.querySelector('#batch-text');
+    input.value='https://example.org/public-image.png\\nhttps://youtube.com/shorts/synthetic-v232\\nhttps://threads.net/@synthetic/post/v232'; input.dispatchEvent(new Event('input',{bubbles:true}));
+    document.querySelector('#batch-form').requestSubmit();
+  })()`);
+  await waitFor(() => cdp.evaluate("!document.querySelector('#batch-dialog').open"), 'v232 多來源批次');
+  assert.deepEqual(await cdp.evaluate("[...document.querySelector('#type-filter').options].map(o=>o.textContent)"), ['所有類型','圖片','影片','社群','網頁']);
+  for (const type of ['圖片','影片','社群','網頁']) {
+    await cdp.evaluate(`(() => { const select=document.querySelector('#type-filter'); select.value=${JSON.stringify(type)}; select.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+    assert.ok(await cdp.evaluate("document.querySelectorAll('.item-card').length > 0"), `${type} 有收藏`);
+    assert.deepEqual(await cdp.evaluate("[...new Set([...document.querySelectorAll('.category')].map(n=>n.textContent))]"), [type]);
+  }
+  await cdp.evaluate("document.querySelector('#type-filter').value='all'; document.querySelector('#type-filter').dispatchEvent(new Event('change',{bubbles:true}))");
+  assert.ok(await cdp.evaluate("document.querySelector('#cards').textContent.includes('外部圖片連結，未離線保存')"));
+  assert.ok(await cdp.evaluate("document.querySelector('#cards').textContent.includes('原圖已存於本機')"));
+  await cdp.evaluate("document.querySelector('#select-visible').click(); document.querySelector('#bulk-edit-button').click(); document.querySelector('#bulk-tags').value='批次合成標籤'; document.querySelector('#bulk-form').requestSubmit()");
+  await waitFor(() => cdp.evaluate("!document.querySelector('#bulk-error').hidden"), '批次超限提示');
+  assert.ok(await cdp.evaluate("[...document.querySelectorAll('.item-card')].every(c=>!c.textContent.includes('批次合成標籤'))"), '超限整批無變更');
+  await cdp.evaluate("document.querySelector('#bulk-dialog').close(); [...document.querySelectorAll('.item-card')].find(c=>c.textContent.includes('V232 網站入口')).querySelector('[data-action=edit]').click(); document.querySelector('#entry-tags').value='網站工具'; document.querySelector('#entry-form').requestSubmit()");
+  await waitFor(() => cdp.evaluate("!document.querySelector('#entry-dialog').open"), '清理標籤後儲存');
+  await cdp.evaluate("document.querySelector('#bulk-edit-button').click(); document.querySelector('#bulk-tags').value='批次合成標籤'; document.querySelector('#bulk-form').requestSubmit()");
+  await waitFor(() => cdp.evaluate("!document.querySelector('#bulk-dialog').open"), '批次附加標籤');
+  assert.ok(await cdp.evaluate("[...document.querySelectorAll('.item-card')].every(c=>c.textContent.includes('批次合成標籤'))"));
+  await cdp.evaluate("document.querySelector('#selection-clear').click()");
+
+  // CORS failure still saves; successful structured metadata remains subordinate to manual type.
+  await cdp.evaluate(`(() => {
+    document.querySelector('#new-button').click();
+    const input=document.querySelector('#entry-url'); input.value='https://x.com/synthetic/status/232'; input.dispatchEvent(new Event('input',{bubbles:true}));
+    window.__v232Fetch=window.fetch; window.fetch=async()=>{throw new TypeError('Synthetic CORS failure')};
+    document.querySelector('#fetch-title').click();
+  })()`);
+  await waitFor(() => cdp.evaluate("document.querySelector('#toast').textContent.includes('仍可保存網址')"), 'CORS fallback');
+  assert.equal(await cdp.evaluate("document.querySelector('#entry-type').value"), '社群');
+  await cdp.evaluate(`(() => {
+    window.fetch=async()=>new Response('<title>合成影片</title><meta property="og:type" content="video.other"><meta property="og:video" content="https://cdn.example.org/232.mp4">');
+    document.querySelector('#fetch-title').click();
+  })()`);
+  await waitFor(() => cdp.evaluate("document.querySelector('#entry-type').value==='影片'"), '可驗證主要影片 metadata');
+  await cdp.evaluate("document.querySelector('#entry-type').value='網頁'; document.querySelector('#entry-type').dispatchEvent(new Event('change',{bubbles:true})); document.querySelector('#fetch-title').click()");
+  await waitFor(() => cdp.evaluate("document.querySelector('#entry-classification').textContent.includes('手動確認')"), '手動類型優先');
+  assert.equal(await cdp.evaluate("document.querySelector('#entry-type').value"), '網頁');
+  await cdp.evaluate("window.fetch=window.__v232Fetch; document.querySelector('#entry-title').value='V232 人工修正'; document.querySelector('#entry-form').requestSubmit()");
+  await waitFor(() => cdp.evaluate("!document.querySelector('#entry-dialog').open"), '人工修正入庫');
+  await cdp.send('Page.reload');
+  await waitFor(() => cdp.evaluate("window.__PA_READY__"), '重新載入保留人工分類');
+  await cdp.evaluate("document.querySelector('[data-view=all]').click(); [...document.querySelectorAll('.item-card')].find(c=>c.textContent.includes('V232 人工修正')).querySelector('[data-action=edit]').click()");
+  assert.equal(await cdp.evaluate("document.querySelector('#entry-type').value"), '網頁');
+  assert.ok(await cdp.evaluate("document.querySelector('#entry-classification').textContent.includes('手動確認')"));
+  await cdp.evaluate("document.querySelector('#entry-dialog').close()");
+  for (const width of [375,390]) {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 3, mobile: true });
+    assert.ok(await cdp.evaluate("document.documentElement.scrollWidth<=document.documentElement.clientWidth"), `${width}px 長內容不溢出`);
+    await cdp.evaluate("document.querySelector('#new-button').click()");
+    assert.ok(await cdp.evaluate("document.querySelector('#entry-form').scrollWidth<=document.querySelector('#entry-form').clientWidth"), `${width}px 表單不溢出`);
+    assert.ok(await cdp.evaluate("getComputedStyle(document.querySelector('#entry-tags')).fontSize==='16px'"), 'iPhone 輸入避免自動縮放');
+    await cdp.evaluate("document.querySelector('#entry-dialog').close()");
+  }
+  if (process.env.PA_E2E_SCREENSHOT_DIR) {
+    await writeFile(join(process.env.PA_E2E_SCREENSHOT_DIR, 'pocket-archive-v232-mobile.png'), Buffer.from((await cdp.send('Page.captureScreenshot', {format:'png'})).data, 'base64'));
+  }
+  process.stdout.write('E2E：v232 四類篩選、網站形式、人工確認/重新載入、批次標籤、XSS、CORS/metadata、375/390px 通過\n');
+
   assert.deepEqual(await cdp.evaluate(`(() => [...document.querySelectorAll('button')].filter(button => !(button.textContent.trim() || button.getAttribute('aria-label') || button.title)).map(button => button.id || button.outerHTML))()`), [], '所有按鈕有可存取名稱');
   assert.deepEqual(await cdp.evaluate(`(() => [...document.querySelectorAll('input:not([type="hidden"]),select,textarea')].filter(control => !control.closest('label') && !control.getAttribute('aria-label') && !control.getAttribute('aria-labelledby')).map(control => control.id))()`), [], '所有表單控制項有標籤');
   await cdp.evaluate("document.querySelectorAll('dialog[open]').forEach(dialog=>dialog.close()); document.dispatchEvent(new KeyboardEvent('keydown',{key:'/'}))");
@@ -351,8 +449,14 @@ try {
   process.stdout.write('E2E：Toast top layer、連續計時、長訊息、完整隱藏、安全區與 reduced-motion 通過\n');
 
   await waitFor(() => cdp.evaluate("Boolean(navigator.serviceWorker.controller)"), 'Service Worker 控制頁面', 16000);
+  await cdp.evaluate(`(async () => {
+    await caches.open('pocket-archive-v2.3.1-ai-handoff');
+    await navigator.serviceWorker.register('./sw.js?upgrade-v232');
+  })()`);
+  await waitFor(() => cdp.evaluate("caches.keys().then(keys=>!keys.includes('pocket-archive-v2.3.1-ai-handoff') && keys.includes('pocket-archive-v2.3.2-content-model'))"), '舊快取更新清除');
+  assert.ok(await cdp.evaluate("caches.match('./content-model.mjs').then(Boolean)"), '新分類模組已離線快取');
   await cdp.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
-  await cdp.send('Page.reload', { ignoreCache: true });
+  await cdp.send('Page.reload');
   await waitFor(() => cdp.evaluate("Boolean(document.querySelector('#page-heading'))"), '離線啟動', 12000);
   await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
 

@@ -104,3 +104,7 @@ iOS Shortcuts 的網路動作若拋出系統錯誤，原生捷徑沒有通用的
 | 4xx/5xx、空回應、離線、逾時 | 尚未確認收件；保留原檔並重試，不能通知已儲存 |
 
 Worker 將未完成上傳在 10 分鐘後列入回收，待 App 收件保留 7 天，App 確認後暫存再留 24 小時；自動回收遇撤權／Google 錯誤會延後。配額與保留完整規則見 CAPTURE-IMAGES.md。沒有 Worker 的 Pages 回滾模式，圖片仍須在 App 點「圖片」選取，不能用背景捷徑收圖。
+
+## v2.3.2 入庫分類
+
+原有 POST /api/capture 與憑證流程不變，無須重建捷徑。URL、分享文字及穩定 ID 保留。YouTube watch/Shorts、Instagram Reels、明確 TikTok 影片頁入庫為影片；YouTube 頻道為網頁。X／Threads／無法驗證的 Instagram 貼文為社群且待確認，可在 App 人工修改。Safari 文章與網站都屬網頁，再選內容形式；捷徑不自動爬整站。公開 metadata 若被阻擋仍可保存，Codex 模擬測試不等於各 App 的 iPhone 實機通過。請依 UAT-V2.3.2.md 驗收。

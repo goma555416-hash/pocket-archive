@@ -8,7 +8,7 @@
 2. 無附件輸出 `pocket-archive-inbox-YYYY-MM-DD.json`；含附件輸出 ZIP，根目錄為 `inbox.json`，圖片位於 metadata 指定的 `attachments/<attachment-id>`。
 3. 使用 [CODEX-ORGANIZE-PROMPT.md](./CODEX-ORGANIZE-PROMPT.md) 產生 `organized.json`，並以 `scripts/validate-organized.mjs` 驗證。
 4. App 嚴格核對 schema、由本裝置記錄的 `export_id`、item ID 及欄位，列出接受和拒絕項目。
-5. 使用者逐項勾選後套用。只可更新建議分類、合併標籤、AI 摘要及已完成狀態；原始網址、備註、來源與附件不變。
+5. 使用者逐項勾選後套用。只合併主題標籤、保存 AI 摘要及已完成狀態；type、classification、webpageKind、原 category、原始網址、備註、來源與附件不變。
 6. App 在 IndexedDB 保存一次更新前快照，可從備份視窗復原最近一次套用。
 
 Drive 流程的 schema 完全相同。為兼容不同 OAuth Client 的 `drive.file` 權限，Codex 不可另建結果檔，必須依 [CODEX-DRIVE-WORKFLOW.md](./CODEX-DRIVE-WORKFLOW.md) 覆寫 `organized-<export_id>.json` 的既有 file ID。
@@ -29,7 +29,10 @@ Drive 流程的 schema 完全相同。為兼容不同 OAuth Client 的 `drive.fi
       "url": "https://example.org/article",
       "title": "Example",
       "note": "User note",
-      "type": "文章",
+      "type": "網頁",
+      "classification": {"status": "provisional", "evidence": "page-url"},
+      "webpageKind": "",
+      "legacyType": "",
       "category": "",
       "tags": [],
       "status": "inbox",
@@ -53,8 +56,8 @@ Drive 流程的 schema 完全相同。為兼容不同 OAuth Client 的 `drive.fi
     {
       "id": "必須是該批次中仍存在的 item.id",
       "analysis_status": "completed",
-      "suggested_categories": ["設計靈感"],
-      "suggested_tags": ["配色", "平面設計"],
+      "suggested_categories": [],
+      "suggested_tags": ["設計靈感", "配色", "平面設計"],
       "summary": "有來源依據的繁體中文摘要",
       "reason": "根據實際可見標題、正文或圖片",
       "confidence": "medium"
@@ -64,6 +67,8 @@ Drive 流程的 schema 完全相同。為兼容不同 OAuth Client 的 `drive.fi
 ```
 
 `analysis_status` 只能是 `completed` 或 `insufficient_data`；`confidence` 只能是 `low`、`medium`、`high`。讀不到正文、需登入或圖片不可解碼時必須使用 `insufficient_data`，不得虛構。
+
+v2.3.2 維持 schema v2；新增 inbox 欄位是相容擴充，舊 inbox／organized 不要求補欄位。type 只代表圖片／影片／社群／網頁；主題放 suggested_tags。舊 suggested_categories 原陣列仍完整讀取，套用時與 suggested_tags 一起作為標籤候選。合併超過 24 個或單個超過 32 字時，不截斷既有值，預覽列出未加入項目，整份建議保留於 aiSuggestion，卡片仍可查閱與搜尋。不支援 AI 類型建議，因此 AI 永不覆寫人工類型。
 
 ## 驗證與隱私
 

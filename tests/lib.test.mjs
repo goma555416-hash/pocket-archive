@@ -151,7 +151,8 @@ test('Codex 建議只改允許欄位，可單次還原且保留 URL、備註、�
   const updated = result.entries[0];
   assert.equal(updated.url, entry.url);
   assert.equal(updated.note, '不可覆寫');
-  assert.deepEqual(updated.tags, ['原有', '新增']);
+  assert.deepEqual(updated.tags, ['原有', '研究', '新增']);
+  assert.equal(updated.category, entry.category, '舊 AI 分類轉入標籤，保留原 category');
   assert.equal(updated.status, 'saved');
   assert.deepEqual(restoreSnapshot(result.entries, result.snapshot), [entry]);
 });
