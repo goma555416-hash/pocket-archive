@@ -428,7 +428,7 @@ try {
 
   assert.deepEqual(await cdp.evaluate(`(() => [...document.querySelectorAll('button')].filter(button => !(button.textContent.trim() || button.getAttribute('aria-label') || button.title)).map(button => button.id || button.outerHTML))()`), [], '所有按鈕有可存取名稱');
   assert.deepEqual(await cdp.evaluate(`(() => [...document.querySelectorAll('input:not([type="hidden"]),select,textarea')].filter(control => !control.closest('label') && !control.getAttribute('aria-label') && !control.getAttribute('aria-labelledby')).map(control => control.id))()`), [], '所有表單控制項有標籤');
-  await cdp.evaluate("document.querySelectorAll('dialog[open]').forEach(dialog=>dialog.close()); document.dispatchEvent(new KeyboardEvent('keydown',{key:'/'}))");
+  await cdp.evaluate("document.querySelectorAll('dialog[open]').forEach(dialog=>dialog.close()); document.activeElement?.blur(); document.dispatchEvent(new KeyboardEvent('keydown',{key:'/'}))");
   assert.equal(await cdp.evaluate("document.activeElement.id"), 'search-input', '/ 鍵聚焦搜尋');
   await cdp.evaluate("document.querySelector('#search-input').blur(); document.dispatchEvent(new KeyboardEvent('keydown',{key:'n'}))");
   assert.equal(await cdp.evaluate("document.querySelector('#entry-dialog').open"), true, 'N 鍵開啟新增');
