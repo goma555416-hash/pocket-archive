@@ -1,11 +1,31 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve, relative, isAbsolute, extname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { findChromium } from './helpers/chromium.mjs';
 
 const HOST = 'http://127.0.0.1:4173';
 const DEBUG = 'http://127.0.0.1:9223';
+const root = fileURLToPath(new URL('../', import.meta.url));
+
+// Use the existing Node runtime instead of requiring a platform-specific Python launcher.
+function staticServer() {
+  const mime = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png' };
+  return createServer(async (request, response) => {
+    try {
+      const pathname = decodeURIComponent(new URL(request.url, HOST).pathname);
+      const file = resolve(root, `.${pathname.endsWith('/') ? `${pathname}index.html` : pathname}`);
+      const withinRoot = relative(root, file);
+      if (withinRoot.startsWith('..') || isAbsolute(withinRoot)) { response.writeHead(403).end(); return; }
+      const content = await readFile(file);
+      response.writeHead(200, { 'Content-Type': mime[extname(file)] || 'application/octet-stream' });
+      response.end(request.method === 'HEAD' ? undefined : content);
+    } catch (error) { response.writeHead(error.code === 'ENOENT' || error.code === 'EISDIR' ? 404 : 400).end(); }
+  });
+}
 
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
@@ -46,12 +66,14 @@ class Cdp {
 
 let server; let browser; let profile; let cdp;
 try {
+  const chromiumPath = await findChromium();
   profile = await mkdtemp(join(tmpdir(), 'pocket-archive-e2e-'));
-  server = spawn('python', ['-m', 'http.server', '4173', '--bind', '127.0.0.1'], { cwd: new URL('..', import.meta.url).pathname, stdio: 'ignore' });
-  await waitFor(async () => (await fetch(HOST)).ok, '本機 HTTP 伺服器');
-  browser = spawn(process.env.CHROMIUM_PATH || '/usr/bin/chromium', ['--headless=new', '--no-sandbox', '--disable-gpu', '--remote-debugging-port=9223', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore' });
+  server = staticServer();
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(4173, '127.0.0.1', resolve); });
+  browser = spawn(chromiumPath, ['--headless=new', '--no-sandbox', '--disable-gpu', '--remote-debugging-port=9223', `--user-data-dir=${profile}`, 'about:blank'], { cwd: root, stdio: 'ignore' });
+  await new Promise((resolve, reject) => { browser.once('spawn', resolve); browser.once('error', reject); });
   const version = await waitFor(async () => { const response = await fetch(`${DEBUG}/json/version`); return response.ok && response.json(); }, 'Chromium DevTools');
-  assert.ok(version.Browser.includes('Chrome'));
+  assert.match(version.Browser, /Chrome|Chromium|Edg(?:e)?\//);
   const target = await fetch(`${DEBUG}/json/new?about:blank`, { method: 'PUT' }).then(response => response.json());
   cdp = new Cdp(target.webSocketDebuggerUrl); await cdp.send('Page.enable'); await cdp.send('Runtime.enable'); await cdp.send('Network.enable');
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `
@@ -467,6 +489,6 @@ try {
     const exited = new Promise(resolve => browser.once('exit', resolve)); browser.kill('SIGTERM');
     await Promise.race([exited, delay(3000)]);
   }
-  if (server && server.exitCode === null) server.kill('SIGTERM');
+  if (server?.listening) await new Promise(resolve => server.close(resolve));
   if (profile) await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });
 }

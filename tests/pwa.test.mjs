@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, access } from 'node:fs/promises';
-import { resolve } from 'node:path';
 
 test('PWA manifest 是有效 JSON、維持品牌且不含 Android Share Target', async () => {
   const manifest = JSON.parse(await readFile(new URL('../manifest.webmanifest', import.meta.url), 'utf8'));
@@ -21,7 +20,7 @@ test('Service Worker 離線清單中的本機資源都存在', async () => {
   assert.ok(resources.includes('drive.mjs'));
   assert.ok(resources.includes('sync.mjs'));
   assert.ok(resources.includes('cloud.mjs'));
-  await Promise.all(resources.filter(Boolean).map(file => access(resolve(new URL('..', import.meta.url).pathname, file))));
+  await Promise.all(resources.filter(Boolean).map(file => access(new URL(`../${file}`, import.meta.url))));
 });
 
 test('App 版本與 Service Worker 快取版本一致', async () => {

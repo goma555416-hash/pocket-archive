@@ -101,7 +101,7 @@ python -m http.server 5173
 
 ## 測試
 
-需要 Node.js 20+ 與 Chromium（完整 E2E）：
+一般測試需要 Node.js 20+；完整驗證建議 Node.js 24 與已安裝的 Chrome／Edge／Chromium（完整 E2E）：
 
 ```bash
 npm test
@@ -111,6 +111,26 @@ npm run test:all
 ```
 
 `npm test` 執行純函式、schema、安全、ZIP 往返與語法檢查；E2E 使用獨立臨時 Chromium profile，測試 v1 遷移、單筆、批次、圖片、搜尋、備份匯入、Codex 預覽/套用/復原、390px viewport 與離線啟動。測試不會讀取真實收藏。
+
+Windows PowerShell 請從儲存庫根目錄執行：
+
+```powershell
+npm.cmd ci
+npm.cmd test
+npm.cmd run test:assets
+npm.cmd run test:e2e
+```
+
+E2E 的本機 HTTP 伺服器使用 Node，不需要 Python。Windows 會檢查 Program Files、Program Files (x86) 與 LOCALAPPDATA 下的 Chrome／Edge 常見安裝位置；Linux 保留 Chromium／Chrome 常見路徑，既有 GitHub Actions 的 `CHROMIUM_PATH` 設定不變。其他安裝位置可在執行 E2E 前明確指定實際執行檔，例如：
+
+```powershell
+$env:CHROMIUM_PATH = "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
+npm.cmd run test:e2e
+# 改回自動偵測
+Remove-Item Env:CHROMIUM_PATH
+```
+
+也可指定實際的 `msedge.exe` 路徑。路徑含空白或中文可直接使用，環境變數值不要另包一層引號；明確指定無效路徑時會報錯，不悄悄換用其他瀏覽器。File URL 已以 Node 原生方式處理，避免 Windows 出現 `C:\C:\...`。本機測試使用 127.0.0.1 的 4173、9223 連接埠，需保持可用。Windows 實機驗證與本次雲端結果見 [測試紀錄](./VALIDATION-V2.3.2.md#windows-測試相容性後續修正)。
 
 ## 隱私、資料安全與限制
 
