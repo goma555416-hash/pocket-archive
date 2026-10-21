@@ -475,7 +475,7 @@ try {
     await caches.open('pocket-archive-v2.3.1-ai-handoff');
     await navigator.serviceWorker.register('./sw.js?upgrade-v232');
   })()`);
-  await waitFor(() => cdp.evaluate("caches.keys().then(keys=>!keys.includes('pocket-archive-v2.3.1-ai-handoff') && keys.includes('pocket-archive-v2.3.2-content-model'))"), '舊快取更新清除');
+  await waitFor(() => cdp.evaluate("caches.keys().then(keys=>!keys.includes('pocket-archive-v2.3.1-ai-handoff') && keys.includes('pocket-archive-v2.3.3-sync-guard'))"), '舊快取更新清除');
   assert.ok(await cdp.evaluate("caches.match('./content-model.mjs').then(Boolean)"), '新分類模組已離線快取');
   await cdp.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
   await cdp.send('Page.reload');
