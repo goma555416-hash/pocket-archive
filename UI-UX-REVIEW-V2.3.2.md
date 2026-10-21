@@ -37,3 +37,38 @@ python .agents/skills/ui-ux-pro-max/scripts/search.py 'touch target minimum mobi
 Chromium 模擬涵蓋表單／四類篩選／批次標籤／375與390px／可存取名稱／焦點／XSS／metadata／離線快取。這不是 VoiceOver、iOS Safari、真 iPhone 大字體或 Windows 實機驗收，也不宣稱全站取得 WCAG 認證。實機清單見 UAT-V2.3.2.md。
 
 公開 Guidelines 的本次 SHA-256：`d246b026f4f29b5823a9cc857f9edf3d2507002e055e32040cadeaf3b38e0234`。安裝後提交 49 個 Skill 原始檔，0 symlinks；Python cache 不提交。
+
+## Codex 專案路徑修正（PR #14 後續修正）
+
+相較上述上游 commit，本次僅調整 UI/UX Pro Max 的 SKILL.md 操作說明：
+
+- 11 處搜尋、design-system、persist、design dials 與 stack 範例，統一使用儲存庫根目錄相對路徑 `.agents/skills/ui-ux-pro-max/scripts/search.py`，不再依賴 Claude plugin 環境變數。明確要求從儲存庫根目錄執行；其他工作目錄需先切回根目錄或解析腳本絕對路徑。
+- persist 範例指定 `--output-dir "."`，對應根目錄執行方式；Python fallback 保留 `python3`／`py -3`，移除對未隨專案安裝之上游 README 的依賴。
+- 檢查兩個 Skill 的全部 4 份 Markdown 文件，其他 SKILL／references 沒有同類錯誤，維持原檔。搜尋腳本、資料、功能、來源及 MIT 授權均未變更；未改動 App、版本、部署或私人資料。
+
+### skills-lock.json 完整性核對
+
+已檢查安裝時使用的 `skills` CLI 1.7.4 實作：`projectLockEntry` 的 `skillPath` 是上游來源路徑；`computedHash` 由 `sourceSkillHash` 對原始來源 Skill 目錄計算，並非修改後本機副本的雜湊。因此 lock 中 `.claude/skills/ui-ux-pro-max/SKILL.md` 是有效的上游定位，不能改為本機 `.agents/` 路徑，也不以本機修改後雜湊取代來源雜湊。
+
+依 CLI 的相同規則（遞迴讀檔、相對路徑 `localeCompare` 排序、依序 SHA-256 更新路徑及內容，排除 `.git`／`node_modules`），對上述兩個已審查來源 commit 重新計算，均與 lock 完全一致：
+
+- UI/UX Pro Max：`27b1e8c953e26f962e3314281601959b04787edf3fd7fccadce176ff844c688d`。
+- Web Design Guidelines：`a6a44d5498f7e8f68289902f3dedfc6f38ae0cee1e96527c80724cf27f727c2a`。
+
+因此保留 skills-lock.json 原內容。本次修正後本機 `.agents/skills/ui-ux-pro-max/SKILL.md` 的 SHA-256 另記為 `bb9689c8df442749ef73eb87ee494444258850998b9781ac9cb399f55ecbd928`，用來區分本機文件與上游原始內容；上游更新或重新安裝時須檢查是否保留本節記錄的 Codex 路徑修正。
+
+### 本次實際驗證
+
+以下均從儲存庫根目錄執行成功；三種呼叫均直接使用修正後範例路徑：
+
+```bash
+python ".agents/skills/ui-ux-pro-max/scripts/search.py" "keyboard focus modal" --domain ux
+python ".agents/skills/ui-ux-pro-max/scripts/search.py" "suspense streaming bundle" --stack nextjs
+python ".agents/skills/ui-ux-pro-max/scripts/search.py" "AI search tool modern minimal" --design-system -p "AI Search"
+python .agents/skills/ui-ux-pro-max/scripts/validate_data.py
+npm test
+npm run test:assets
+git diff --check
+```
+
+結果：domain／stack 各 3 筆結果，design-system 正常輸出，未使用 persist 或變更專案設計；資料驗證通過 12 個 domain、22 個 stack 與 ui-reasoning。npm test 共 121 個測試通過、0 失敗、0 略過，JS 語法檢查通過；Static Assets 預檢 15 個公開資產及 16 個私人哨兵通過，另驗證 Skill CSV／lock 為 404。未更動執行期程式，本次未另重跑本機 Chromium E2E；PR 的最新 CI 會重新執行既有 E2E 與其他檢查。
