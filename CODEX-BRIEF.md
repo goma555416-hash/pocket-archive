@@ -20,3 +20,7 @@ node scripts/validate-organized.mjs examples/organized-example.json examples/inb
 - `tests/e2e.mjs`：無外部套件的 Chromium CDP 整合測試。
 
 不要提交 Pocket Archive 備份、inbox 匯出、`organized.json` 或真實圖片；`.gitignore` 已提供防線，提交前仍需人工檢查。
+
+## v2.3.2
+
+分類變更先讀 CONTENT-MODEL.md。類型只有圖片／影片／社群／網頁，主題用 tags；保留 classification 的人工確認與 legacyType/category。schema 與 IndexedDB 不升版，不操作正式 migration。實機驗收改用 UAT-V2.3.2.md；UI 工作使用 AGENTS.md 指定的專案 Skills。

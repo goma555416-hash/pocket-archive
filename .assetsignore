@@ -40,3 +40,7 @@ Thumbs.db
 package-lock.json
 package.json
 wrangler.jsonc
+
+# Project-only agent instructions, tools and skill data
+/.agents/
+skills-lock.json

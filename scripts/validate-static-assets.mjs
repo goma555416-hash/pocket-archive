@@ -25,7 +25,8 @@ const privateSentinels = [
   'preflight-private.pem',
   'preflight-private.key',
   'preflight-local.sqlite',
-  'preflight-debug.log'
+  'preflight-debug.log',
+  '.agents/skills/preflight-private.json'
 ];
 const publicAssets = [
   'index.html',
@@ -33,6 +34,7 @@ const publicAssets = [
   'theme.css',
   'app.js',
   'lib.mjs',
+  'content-model.mjs',
   'image-viewer.mjs',
   'ai-launch.mjs',
   'capture-client.mjs',
@@ -113,7 +115,7 @@ try {
   }
   assert.equal(await (await fetch(`${origin}/${publicSentinel}`)).text(), sentinel);
 
-  for (const relativePath of privateSentinels) {
+  for (const relativePath of [...privateSentinels, 'skills-lock.json', '.agents/skills/ui-ux-pro-max/data/ux-guidelines.csv']) {
     const response = await fetch(`${origin}/${relativePath}`);
     assert.equal(response.status, 404, `${relativePath} must be excluded from Static Assets`);
   }

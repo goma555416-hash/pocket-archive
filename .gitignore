@@ -31,3 +31,8 @@ test-results/
 playwright-report/
 .DS_Store
 Thumbs.db
+
+# Python tool output and private asset preflight fixture
+__pycache__/
+*.pyc
+.agents/skills/preflight-private.json

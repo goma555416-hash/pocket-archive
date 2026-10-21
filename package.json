@@ -1,6 +1,6 @@
 {
   "name": "pocket-archive",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,7 @@
     "test:assets": "node scripts/validate-static-assets.mjs",
     "test:e2e": "node tests/e2e.mjs",
     "test:all": "npm test && npm run test:assets && npm run test:e2e",
-    "check": "node --check app.js && node --check lib.mjs && node --check db.mjs && node --check archive.mjs && node --check drive.mjs && node --check backend.mjs && node --check migration.mjs && node --check crypto.mjs && node --check sync.mjs && node --check cloud.mjs && node --check worker/src/index.mjs && node --check worker/src/security.mjs && node --check worker/src/google.mjs && node --check sw.js && node --check image-viewer.mjs && node --check ai-launch.mjs && node --check capture-client.mjs && node --check worker/src/capture-images.mjs",
+    "check": "node --check app.js && node --check lib.mjs && node --check content-model.mjs && node --check db.mjs && node --check archive.mjs && node --check drive.mjs && node --check backend.mjs && node --check migration.mjs && node --check crypto.mjs && node --check sync.mjs && node --check cloud.mjs && node --check worker/src/index.mjs && node --check worker/src/security.mjs && node --check worker/src/google.mjs && node --check sw.js && node --check image-viewer.mjs && node --check ai-launch.mjs && node --check capture-client.mjs && node --check worker/src/capture-images.mjs",
     "worker:dev": "wrangler dev --local",
     "worker:migrate:local": "wrangler d1 migrations apply pocket-archive --local"
   },

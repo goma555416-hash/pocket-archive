@@ -48,9 +48,9 @@ h1 em {color:#6079B5}
 .item-card {border-color:#E7E9F2;box-shadow:0 7px 25px rgba(57,75,121,.05)}
 .item-card:hover {border-color:#BFCDEA}
 .category {color:#486392;background:#EAF0FB}
-.card-host,.card-note,.card-date,.card-menu {color:#7A88A1}
+.card-host,.card-note,.card-date,.card-menu {color:#55627D}
 .card-menu:hover {background:#EEF1FA}
-.tag {color:#607397;background:#F0F2FC}
+.tag {color:#526184;background:#F0F2FC}
 .card-footer {border-color:#EDF0F6}
 .text-action {color:#526AA5}
 .empty-state {border-color:#CCD6EF;background:#FBFBFE}
@@ -61,7 +61,7 @@ dialog::backdrop {background:rgba(27,37,67,.64)}
 .icon-button {background:#F1F3FB;color:#637498}
 .entry-form input,.entry-form select,.entry-form textarea {background:#FEFEFF;border-color:#DFE5F1}
 .entry-form input:focus,.entry-form select:focus,.entry-form textarea:focus {border-color:#849CD3;box-shadow:0 0 0 3px #E8EDFC}
-.entry-form label small {color:#7887A2}
+.entry-form label small {color:#5C6C88}
 .url-entry button {border-color:#C7D3EF;color:#455F97;background:#EDF2FD}
 .toast {background:#344D81;box-shadow:0 15px 40px rgba(34,45,86,.20)}
 @media(max-width:760px) {

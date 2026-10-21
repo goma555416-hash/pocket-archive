@@ -1,4 +1,5 @@
-export const TYPES = ['文章', '影片', '社群貼文', '圖片', '遊戲', '香水', '工具', '其他'];
+import { classifyContent, contentFields, preservedTags, mergeTopicTags } from './content-model.mjs';
+export { TYPES } from './content-model.mjs';
 export const STATUSES = ['inbox', 'saved', 'archived'];
 export const STORAGE_KEY = 'pocket-archive:entries:v1';
 export const BACKUP_FORMAT = 'pocket-archive-backup';
@@ -40,10 +41,7 @@ export function displayHost(url) {
 }
 
 export function inferType(url) {
-  const host = displayHost(url).toLowerCase();
-  if (/youtube\.com|youtu\.be|vimeo\.com/.test(host)) return '影片';
-  if (/instagram\.com|threads\.net|x\.com|twitter\.com|facebook\.com|pinterest\./.test(host)) return '社群貼文';
-  return '文章';
+  return classifyContent({ url }).type;
 }
 
 export function cleanTags(input) {
@@ -94,8 +92,8 @@ function sanitizeAiSuggestion(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
   return {
     analysisStatus: data.analysisStatus === 'completed' ? 'completed' : 'insufficient_data',
-    categories: cleanTags(data.categories),
-    tags: cleanTags(data.tags),
+    categories: preservedTags(data.categories),
+    tags: preservedTags(data.tags),
     summary: String(data.summary || '').slice(0, 1200),
     reason: String(data.reason || '').slice(0, 800),
     confidence: ['low', 'medium', 'high'].includes(data.confidence) ? data.confidence : 'low',
@@ -141,10 +139,9 @@ export function validatedEntry(data) {
     previewUrl,
     title: String(data.title || titleFallback).trim().slice(0, 160) || titleFallback,
     note: String(data.note || '').slice(0, 5000),
-    type: TYPES.includes(data.type) ? data.type : (kind === 'image' ? '圖片' : inferType(url)),
-    category: String(data.category || '').trim().slice(0, 80),
+    ...contentFields({ ...data, attachment }, url),
+    category: String(data.category || '').trim(),
     status: STATUSES.includes(data.status) ? data.status : 'inbox',
-    tags: cleanTags(data.tags),
     starred: Boolean(data.starred),
     source: String(data.source || (kind === 'image' ? 'file' : displayHost(url))).slice(0, 160),
     attachment,
@@ -157,23 +154,24 @@ export function validatedEntry(data) {
 
 export function createEntry(input) {
   const now = new Date().toISOString();
-  return validatedEntry({ ...input, id: makeId(), createdAt: now, updatedAt: now });
+  const decision = input.classification ? {} : classifyContent({ url: input.url, manualType: input.type });
+  return validatedEntry({ ...input, ...decision, id: makeId(), createdAt: now, updatedAt: now });
 }
 
 export function createCaptureEntry(job) {
   if (!job || typeof job.id !== 'string' || !SAFE_ID.test(job.id)) throw new Error('快速收件工作 ID 無效');
   const timestamp = Number(job.createdAt); const createdAt = Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : new Date().toISOString();
-  if (job.kind === 'image') return validatedEntry({ id: job.id, kind: 'image', title: job.attachment?.name, attachment: job.attachment, type: '圖片', source: 'ios-shortcut-image', createdAt, updatedAt: createdAt });
+  if (job.kind === 'image') return validatedEntry({ id: job.id, kind: 'image', title: job.attachment?.name, attachment: job.attachment, ...classifyContent({ validatedImage: true }), source: 'ios-shortcut-image', createdAt, updatedAt: createdAt });
   const originalUrl = job.originalUrl || job.url;
   const note = String(job.text || '').replace(originalUrl, '').trim().slice(0, 5000);
   return validatedEntry({
-    id: job.id, url: job.url, originalUrl, title: job.title, note, type: inferType(job.url), source: displayHost(job.url), createdAt, updatedAt: createdAt
+    id: job.id, url: job.url, originalUrl, title: job.title, note, ...classifyContent({ url: job.url }), source: displayHost(job.url), createdAt, updatedAt: createdAt
   });
 }
 
 export function createImageEntry(file, hash, attachmentId = makeId('att')) {
   const attachment = { id: attachmentId, name: file.name, size: file.size, mimeType: file.type, hash };
-  return createEntry({ kind: 'image', title: file.name.replace(/\.[^.]+$/, ''), type: '圖片', source: 'file', attachment });
+  return createEntry({ kind: 'image', title: file.name.replace(/\.[^.]+$/, ''), ...classifyContent({ validatedImage: true }), source: 'file', attachment });
 }
 
 export function parseBatchUrls(text, existing = []) {
@@ -260,9 +258,9 @@ export function createInboxEnvelope(entries, exportId = makeId('export'), export
     export_id: exportId,
     exported_at: exportedAt,
     privacy_notice: '此檔案可能包含私人收藏與附件；請只交給你信任的本機或雲端工作環境。',
-    items: entries.map(entry => ({
+    items: entries.map(validatedEntry).map(entry => ({
       id: entry.id, kind: entry.kind, url: entry.url, title: entry.title, note: entry.note,
-      type: entry.type, category: entry.category, tags: entry.tags, status: entry.status,
+      type: entry.type, classification: entry.classification, webpageKind: entry.webpageKind, legacyType: entry.legacyType, category: entry.category, tags: entry.tags, status: entry.status,
       source: entry.source, attachment: entry.attachment
     }))
   };
@@ -276,8 +274,8 @@ function validateSuggestion(raw) {
   return {
     id: raw.id,
     analysisStatus: raw.analysis_status,
-    categories: cleanTags(raw.suggested_categories),
-    tags: cleanTags(raw.suggested_tags),
+    categories: preservedTags(raw.suggested_categories),
+    tags: preservedTags(raw.suggested_tags),
     summary: String(raw.summary || '').slice(0, 1200),
     reason: String(raw.reason || '').slice(0, 800),
     confidence
@@ -317,8 +315,7 @@ export function applySuggestions(entries, suggestions, selectedIds = suggestions
     snapshot.push(entry);
     return validatedEntry({
       ...entry,
-      category: suggestion.categories[0] || entry.category,
-      tags: cleanTags([...entry.tags, ...suggestion.tags]),
+      tags: mergeTopicTags(entry.tags, [...suggestion.categories, ...suggestion.tags]).tags,
       status: suggestion.analysisStatus === 'completed' ? 'saved' : entry.status,
       aiSuggestion: { ...suggestion, appliedAt: at },
       updatedAt: at
@@ -334,7 +331,7 @@ export function restoreSnapshot(entries, snapshot) {
 
 export function matchesEntry(entry, query) {
   const keywords = String(query || '').toLocaleLowerCase().split(/\s+/).filter(Boolean);
-  const content = [entry.title, entry.url, entry.note, entry.type, entry.category, entry.source, entry.aiSuggestion?.summary, ...entry.tags].join(' ').toLocaleLowerCase();
+  const content = [entry.title, entry.url, entry.note, entry.type, entry.legacyType, entry.category, entry.source, entry.aiSuggestion?.summary, ...(entry.aiSuggestion?.categories || []), ...(entry.aiSuggestion?.tags || []), ...entry.tags].join(' ').toLocaleLowerCase();
   return keywords.every(word => content.includes(word));
 }
 

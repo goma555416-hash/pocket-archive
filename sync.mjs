@@ -196,6 +196,13 @@ export function reconcileReplica(entries, tombstones = {}, remoteRecords = [], l
     }
     const relation = compareClocks(local.clock, remote.clock);
     if (relation === 'dominates') continue;
+    // Older clients discard extension fields. Never silently replace a confirmed
+    // presentation (or its webpage kind), even with a causally newer old record.
+    if (local.operation === 'upsert' && remote.operation === 'upsert'
+      && local.entry.classification.status === 'manual' && remote.entry.classification.status !== 'manual') {
+      conflicts.push({ itemId: remote.itemId, local, remote, observedClock: observedByItem.get(remote.itemId), chosen: 'local' });
+      continue;
+    }
     if (relation === 'equal' && recordsDescribeSameValue(local, remote)) continue;
     if (relation === 'dominated') {
       if (remote.operation === 'delete') { byId.delete(remote.itemId); deleted[remote.itemId] = remote; }

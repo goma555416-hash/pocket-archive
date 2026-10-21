@@ -5,7 +5,7 @@
 輸入是 `pocket-archive-inbox` schema v2：純連結批次為 JSON；含圖片時為 ZIP，清單在根目錄 `inbox.json`，圖片路徑由各 item 的 `attachment.path` 指定。請逐項遵守：
 
 1. 只能根據匯出檔中的標題、網址、備註與你實際成功讀到的公開內容／附件判斷。需要登入、遭封鎖、看不到正文或圖片不可解碼時，使用 `analysis_status: "insufficient_data"`，不得補寫看似合理的內容。
-2. 優先重用輸入中已有的非空 `category` 與其他項目的既有分類；每項最多 3 個 `suggested_categories`（通常 1 個）及 8 個精確、不重複的 `suggested_tags`。避免只差字詞的近義分類。
+2. `type` 只有圖片／影片／社群／網頁，代表呈現形式，不是主題；`webpageKind` 是文章／網站／一般網頁的可選細分。不要輸出類型建議或修改人工確認。主題（遊戲、香水、工具、教學等）放入 `suggested_tags`（最多 8 個）；優先重用既有 tags 與非空 category 的用詞。新結果 `suggested_categories` 使用空陣列；App 仍相容讀取 v2.3.1 的非空 suggested_categories 並將其合併為標籤，不丟棄舊建議。避免只差字詞的近義標籤。
 3. 不改寫 id，不輸出原始備註、token 或附件內容。摘要使用繁體中文、最多 200 字；reason 簡短說明證據。信心只能是 `low`、`medium`、`high`。
 4. `source_export_id` 必須逐字複製輸入的 `export_id`。每個輸入 item 恰好輸出一次；未知 ID 不得加入。
 5. 只建立一個 `organized.json`，格式必須是：
@@ -19,8 +19,8 @@
     {
       "id": "逐字複製 item.id",
       "analysis_status": "completed",
-      "suggested_categories": ["設計靈感"],
-      "suggested_tags": ["配色", "排版"],
+      "suggested_categories": [],
+      "suggested_tags": ["設計靈感", "配色", "排版"],
       "summary": "依實際可見內容撰寫的摘要",
       "reason": "根據可見標題、正文或圖片",
       "confidence": "medium"

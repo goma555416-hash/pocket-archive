@@ -113,12 +113,20 @@ export class PocketRepository {
     const stores = ['entries', 'attachments'];
     if (Object.keys(meta).length) stores.push('meta');
     const tx = this.db.transaction(stores, 'readwrite');
+    const done = transactionDone(tx);
     try {
       const entryStore = tx.objectStore('entries');
       const attachmentStore = tx.objectStore('attachments');
-      entryStore.clear();
+      const stored = await requestResult(entryStore.getAll());
+      const previous = new Map(stored.map(entry => [entry.id, entry]));
+      const retained = new Set(values.map(entry => entry.id));
+      for (const entry of stored) if (!retained.has(entry.id)) entryStore.delete(entry.id);
       for (const entry of values) {
-        entryStore.put(entry);
+        // A read-time compatibility projection is not a bulk migration. Keep
+        // untouched raw rows byte-for-byte, including unknown historical fields.
+        let unchanged = false;
+        try { unchanged = previous.has(entry.id) && JSON.stringify(validatedEntry(previous.get(entry.id))) === JSON.stringify(entry); } catch { /* explicitly replaced invalid row */ }
+        if (!unchanged) entryStore.put(entry);
         const blob = entry.attachment && attachmentBlobs.get(entry.attachment.id);
         if (blob) attachmentStore.put({ id: entry.attachment.id, blob });
       }
@@ -127,9 +135,10 @@ export class PocketRepository {
         const metaStore = tx.objectStore('meta');
         for (const [key, value] of Object.entries(meta)) metaStore.put({ key, value });
       }
-      await transactionDone(tx);
+      await done;
     } catch (error) {
       try { tx.abort(); } catch { /* already aborted or completed */ }
+      await done.catch(() => {});
       throw storageError(error);
     }
     return values;
