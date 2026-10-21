@@ -84,7 +84,7 @@ export function imageCaptureService({ env, now, driveFetch }) {
       if (length && length !== bytes.length) fail(400, 'image_size_mismatch', '圖片傳輸不完整');
       if (!hasValidImageSignature(bytes.subarray(0, 64), mime)) fail(415, 'image_signature_mismatch', '圖片內容與 MIME 不符');
       const hash = await sha256(bytes);
-      const duplicate = await db.prepare("SELECT * FROM capture_images WHERE user_id=? AND hash=? AND status IN ('ready','completed') ORDER BY created_at LIMIT 1").bind(credential.user_id, hash).first();
+      const duplicate = await db.prepare("SELECT * FROM capture_images WHERE user_id=? AND hash=? AND status='ready' ORDER BY created_at DESC LIMIT 1").bind(credential.user_id, hash).first();
       if (duplicate) {
         await db.prepare("UPDATE capture_images SET status='completed',job_id=?,hash=?,size=?,cleaned_at=? WHERE id=?").bind(duplicate.job_id, hash, bytes.length, now(), id).run();
         return existingResult(duplicate);
@@ -100,10 +100,14 @@ export function imageCaptureService({ env, now, driveFetch }) {
       const check = await boundedBytes((await drive(credential.user_id, `${API}/files/${fileId}?alt=media`)).body);
       if (check.length !== bytes.length || await sha256(check) !== hash) fail(503, 'capture_integrity_failed', 'Drive 回讀完整性驗證失敗，尚未收件');
       // Separate table can transition only after a durable queue record exists.
-      const jobId = `capture_${hash}`;
-      await db.prepare(`INSERT INTO capture_jobs (id,user_id,credential_id,idempotency_key,canonical_url,original_url,source,status,created_at,expires_at)
+      // A completed delivery is not proof that the image still exists in local-first replicas.
+      // Use a fresh job identity so a deleted image can be added again without
+      // colliding with its old completed job or tombstone.
+      const jobId = `capture_${randomToken(15)}`;
+      const queued = await db.prepare(`INSERT INTO capture_jobs (id,user_id,credential_id,idempotency_key,canonical_url,original_url,source,status,created_at,expires_at)
         SELECT ?,?,?,?,'','','ios-shortcut-image','pending',?,? WHERE EXISTS (SELECT 1 FROM capture_images WHERE id=? AND status='receiving' AND expires_at>?)
         ON CONFLICT(id) DO NOTHING`).bind(jobId, credential.user_id, credential.id, `image:${id}`, time, time + 7 * DAY, id, now()).run();
+      if (!queued.meta?.changes) fail(409, 'capture_queue_conflict', '無法安全建立新的圖片收件工作；請重新分享');
       const ready = await db.prepare("UPDATE capture_images SET status='ready',job_id=?,expires_at=? WHERE id=? AND status='receiving' AND expires_at>? AND EXISTS(SELECT 1 FROM capture_jobs WHERE id=?)").bind(jobId, time + 7 * DAY, id, now(), jobId).run();
       if (!ready.meta?.changes) fail(409, 'upload_expired', '上傳期限已過，尚未安全收件');
       return json({ ok: true, status: 'accepted', jobId, sha256: hash, size: bytes.length, message: '原始圖片已安全收件；App 尚未入庫／同步' }, 202);
