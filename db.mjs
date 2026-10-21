@@ -21,6 +21,12 @@ function requestResult(request) {
   });
 }
 
+async function markDataRevision(transaction) {
+  const store = transaction.objectStore('meta');
+  const row = await requestResult(store.get(REVISION_KEY));
+  store.put({ key: REVISION_KEY, value: revisionNumber(row?.value) + 1 });
+}
+
 function transactionDone(transaction) {
   return new Promise((resolve, reject) => {
     transaction.oncomplete = () => resolve();
@@ -110,29 +116,50 @@ export class PocketRepository {
 
   async saveEntry(entry, blob = null) {
     const value = validatedEntry(entry);
-    const stores = blob ? ['entries', 'attachments'] : ['entries'];
+    const stores = blob ? ['entries', 'attachments', 'meta'] : ['entries', 'meta'];
     const tx = this.db.transaction(stores, 'readwrite');
-    tx.objectStore('entries').put(value);
-    if (blob && value.attachment) tx.objectStore('attachments').put({ id: value.attachment.id, blob });
-    try { await transactionDone(tx); } catch (error) { throw storageError(error); }
+    const done = transactionDone(tx);
+    try {
+      await markDataRevision(tx);
+      tx.objectStore('entries').put(value);
+      if (blob && value.attachment) tx.objectStore('attachments').put({ id: value.attachment.id, blob });
+      await done;
+    } catch (error) {
+      try { tx.abort(); } catch { /* already closed */ }
+      await done.catch(() => {}); throw storageError(error);
+    }
     return value;
   }
 
   async saveEntries(entries) {
     const values = entries.map(validatedEntry);
-    const tx = this.db.transaction('entries', 'readwrite');
-    values.forEach(entry => tx.objectStore('entries').put(entry));
-    try { await transactionDone(tx); } catch (error) { throw storageError(error); }
+    const tx = this.db.transaction(['entries', 'meta'], 'readwrite');
+    const done = transactionDone(tx);
+    try {
+      await markDataRevision(tx);
+      values.forEach(entry => tx.objectStore('entries').put(entry));
+      await done;
+    } catch (error) {
+      try { tx.abort(); } catch { /* already closed */ }
+      await done.catch(() => {}); throw storageError(error);
+    }
     return values;
   }
 
   async replaceEntries(entries) {
     const values = entries.map(validatedEntry);
-    const tx = this.db.transaction('entries', 'readwrite');
-    const store = tx.objectStore('entries');
-    store.clear();
-    values.forEach(entry => store.put(entry));
-    try { await transactionDone(tx); } catch (error) { throw storageError(error); }
+    const tx = this.db.transaction(['entries', 'meta'], 'readwrite');
+    const done = transactionDone(tx);
+    try {
+      await markDataRevision(tx);
+      const store = tx.objectStore('entries');
+      store.clear();
+      values.forEach(entry => store.put(entry));
+      await done;
+    } catch (error) {
+      try { tx.abort(); } catch { /* already closed */ }
+      await done.catch(() => {}); throw storageError(error);
+    }
     return values;
   }
 
@@ -206,10 +233,17 @@ export class PocketRepository {
   }
 
   async deleteEntry(entry) {
-    const tx = this.db.transaction(['entries', 'attachments'], 'readwrite');
-    tx.objectStore('entries').delete(entry.id);
-    if (entry.attachment?.id) tx.objectStore('attachments').delete(entry.attachment.id);
-    try { await transactionDone(tx); } catch (error) { throw storageError(error); }
+    const tx = this.db.transaction(['entries', 'attachments', 'meta'], 'readwrite');
+    const done = transactionDone(tx);
+    try {
+      await markDataRevision(tx);
+      tx.objectStore('entries').delete(entry.id);
+      if (entry.attachment?.id) tx.objectStore('attachments').delete(entry.attachment.id);
+      await done;
+    } catch (error) {
+      try { tx.abort(); } catch { /* already closed */ }
+      await done.catch(() => {}); throw storageError(error);
+    }
   }
 
   async getAttachment(id) {
@@ -221,13 +255,20 @@ export class PocketRepository {
 
   async importBundle(entries, attachmentBlobs = new Map()) {
     const values = entries.map(validatedEntry);
-    const tx = this.db.transaction(['entries', 'attachments'], 'readwrite');
-    for (const entry of values) {
-      tx.objectStore('entries').put(entry);
-      const blob = entry.attachment && attachmentBlobs.get(entry.attachment.id);
-      if (blob) tx.objectStore('attachments').put({ id: entry.attachment.id, blob });
+    const tx = this.db.transaction(['entries', 'attachments', 'meta'], 'readwrite');
+    const done = transactionDone(tx);
+    try {
+      await markDataRevision(tx);
+      for (const entry of values) {
+        tx.objectStore('entries').put(entry);
+        const blob = entry.attachment && attachmentBlobs.get(entry.attachment.id);
+        if (blob) tx.objectStore('attachments').put({ id: entry.attachment.id, blob });
+      }
+      await done;
+    } catch (error) {
+      try { tx.abort(); } catch { /* already closed */ }
+      await done.catch(() => {}); throw storageError(error);
     }
-    try { await transactionDone(tx); } catch (error) { throw storageError(error); }
     return values;
   }
 
