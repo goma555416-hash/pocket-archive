@@ -10,6 +10,25 @@ function fail(status, code, message) {
   return Object.assign(new Error(message), { status, code });
 }
 
+// Classify known social hosts independently of whether their particular URL supports
+// public oEmbed. Unsupported social pages must not fall through to browser HTML fetch.
+export function identifySocialPlatform(input) {
+  let url;
+  try { url = new URL(input); } catch { return ''; }
+  if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return '';
+  const host = url.hostname.toLowerCase();
+  if (YOUTUBE_HOSTS.has(host)) return 'YouTube';
+  if (TIKTOK_HOSTS.has(host) || ['vt.tiktok.com', 'vm.tiktok.com'].includes(host)) return 'TikTok';
+  const hosts = [
+    ['Instagram', ['instagram.com', 'www.instagram.com', 'm.instagram.com']],
+    ['Threads', ['threads.com', 'www.threads.com', 'threads.net', 'www.threads.net']],
+    ['X', ['x.com', 'www.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com']],
+    ['Facebook', ['facebook.com', 'www.facebook.com', 'm.facebook.com']],
+    ['Pinterest', ['pinterest.com', 'www.pinterest.com', 'pin.it']]
+  ];
+  return hosts.find(([, domains]) => domains.includes(host))?.[0] || '';
+}
+
 export function identifySocialMediaUrl(input) {
   if (typeof input !== 'string' || input.length > 2048) return null;
   let url;
