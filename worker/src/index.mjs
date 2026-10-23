@@ -1,4 +1,5 @@
 import { imageCaptureService } from './capture-images.mjs';
+import { fetchSocialMediaMetadata } from '../../social-metadata.mjs';
 import {
   CSRF_COOKIE, OAUTH_COOKIE, OWNER_SETUP_COOKIE, SESSION_COOKIE, appendCookie, assertSameOrigin, clearCookie, cookie,
   decryptSecret, encryptSecret, expectedOrigin, json, parseCookies, pkceChallenge, publicError,
@@ -545,6 +546,15 @@ async function driveRouteForSession(request, env, path, session) {
   throw httpError(405, 'method_not_allowed', '不支援的 Drive API 方法');
 }
 
+async function socialMetadataRoute(request, env, ctx) {
+  return authenticatedResponse(request, env, { csrf: true }, async () => {
+    await consumeRateLimit(request, env, ctx, 'social-metadata', 30, 10 * 60_000);
+    const body = await readJson(request, 4096);
+    const metadata = await fetchSocialMediaMetadata(body?.url, { fetchImpl: fetcher(env) });
+    return json({ ok: true, metadata }, 200, { 'Cache-Control': 'no-store' });
+  });
+}
+
 async function driveRoute(request, env, path) {
   const csrf = !['GET', 'HEAD'].includes(request.method);
   return authenticatedResponse(request, env, { csrf }, session => driveRouteForSession(request, env, path, session));
@@ -563,6 +573,7 @@ export async function fetchHandler(request, env, ctx = {}) {
     else if (path === '/api/logout' && request.method === 'POST') response = await logout(request, env);
     else if (path === '/api/auth/revoke' && request.method === 'POST') response = await revokeGrant(request, env);
     else if (/^\/api\/sessions\/[A-Za-z0-9_-]{8,64}$/.test(path) && request.method === 'DELETE') response = await revokeSession(request, env, path.split('/').pop());
+    else if (path === '/api/social/metadata' && request.method === 'POST') response = await socialMetadataRoute(request, env, ctx);
     else if (path === '/api/capture/credentials' && request.method === 'POST') response = await createCaptureCredential(request, env);
     else if (path === '/api/capture/credentials' && request.method === 'GET') response = await listCaptureCredentials(request, env);
     else if (/^\/api\/capture\/credentials\/[A-Za-z0-9_-]{8,64}$/.test(path) && request.method === 'DELETE') response = await revokeCaptureCredential(request, env, path.split('/').pop());
