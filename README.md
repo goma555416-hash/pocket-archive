@@ -4,7 +4,13 @@ Pocket Archive 是給 iPhone／iOS Safari、主畫面 Web App 與 Windows 瀏覽
 
 視覺維持既定 Minimal & Modern、Butter Yellow `#FFF2C9` × Periwinkle `#CBD7EF` 與 A3 實心書籤 Icon。
 
-## v2.3.5 公開影片來源資訊讀取（PR 審核中，尚未部署）
+## v2.3.6 公開社群連結讀取的錯誤分流修復（PR 審核中，未部署）
+
+- 修正 v2.3.5 在後端被判定不可用時，YouTube/TikTok 官方來源資訊讀取誤退回瀏覽器跨來源讀取的情形；改為先重新確認 Session 與後端狀態，並提供可理解的錯誤指引。
+- 已知社群平台（Instagram、Threads、X 等）不支援的貼文連結明確顯示「尚不支援內容讀取」；不誤以為內容已被讀取，也不呼叫未授權的網站爬蟲。
+- 保留本機手動收藏、Google Drive 同步、既有憑證、Worker API 與資料庫格式。Service Worker 快取與畫面版本同步更新，細節見 [UAT-SOCIAL-METADATA-V2.3.6.md](./UAT-SOCIAL-METADATA-V2.3.6.md)。
+
+## v2.3.5 公開影片來源資訊讀取（已部署，實機驗收中）
 
 - 新增獨立 `social-metadata.mjs`，識別經驗證的 YouTube／Shorts／TikTok 公開影片網址；使用者手動按「讀取公開影片資訊／網站標題」，Worker 向固定官方 oEmbed 端點讀取**標題、作者及允許來源的縮圖**。
 - 需要 Pocket Archive 擁有者登入；沿用 Same-Origin Session、CSRF、D1 限流。無任意公開爬蟲、代理、付費 API、新憑證或資料庫 Migration。只把標題與縮圖填入使用者的編輯視窗，保存仍須人工確認。
