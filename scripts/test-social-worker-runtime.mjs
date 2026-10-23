@@ -53,13 +53,15 @@ export default {
 // the per-Worker module and compatibility options nested in "workers".
 const mf = new Miniflare({
   workers: [{
-    name: 'social-runtime-fixture',
-    compatibilityDate: '2026-10-17',
-    modulesRoot: root,
-    modules: [
-      { type: 'ESModule', path: fixturePath, contents: fixture },
-      { type: 'ESModule', path: sourcePath, contents: await readFile(sourcePath, 'utf8') }
-    ]
+    worker: {
+      name: 'social-runtime-fixture',
+      compatibilityDate: '2026-10-17',
+      modulesRoot: root,
+      modules: [
+        { type: 'ESModule', path: fixturePath, contents: fixture },
+        { type: 'ESModule', path: sourcePath, contents: await readFile(sourcePath, 'utf8') }
+      ]
+    }
   }]
 });
 try {
