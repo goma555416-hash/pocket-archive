@@ -1,5 +1,5 @@
 import { receiveCaptureJob, imageDimensions } from './capture-client.mjs';
-import { identifySocialMediaUrl } from './social-metadata.mjs';
+import { identifySocialMediaUrl, identifySocialPlatform } from './social-metadata.mjs';
 import { classifyContent, WEBPAGE_KINDS, inputTags, mergeTopicTags, compatibilityPending } from './content-model.mjs';
 import { codexLaunchCommand, cloudAiJobForReview } from './ai-launch.mjs';
 import { createImageViewer } from './image-viewer.mjs';
@@ -549,9 +549,25 @@ async function updateStorageSummary() {
 async function fetchTitle() {
   let url; try { url = normalizeUrl($('#entry-url').value); } catch (error) { toast(error.message); return; }
   const social = identifySocialMediaUrl(url);
-  if (social && state.backendAvailable) {
+  if (social) {
+    // Only an explicit provider oEmbed request can read this media URL. Never
+    // silently fall back to an HTML fetch blocked by YouTube/TikTok CORS.
+    if (!state.backendAvailable || !state.backendSession) {
+      try {
+        const detected = await state.backend?.detectSession();
+        state.backendAvailable = Boolean(detected?.available);
+        state.backendSession = detected?.session || null;
+      } catch (error) {
+        $('#entry-metadata-status').textContent = `無法確認 Pocket Archive 登入狀態：${error.message}；仍可手動收藏網址。`;
+        return;
+      }
+    }
+    if (!state.backendAvailable) {
+      $('#entry-metadata-status').textContent = '目前無法連線至 Pocket Archive 影片資訊讀取服務。請確認使用 Cloudflare 正式網站及網路連線；仍可手動收藏。';
+      return;
+    }
     if (!state.backendSession) {
-      $('#entry-metadata-status').textContent = '公開影片資訊讀取需要先登入 Pocket Archive；不影響手動收藏。';
+      $('#entry-metadata-status').textContent = '讀取公開影片資訊前，請先在 Google Drive 設定登入 Pocket Archive；仍可手動收藏。';
       return;
     }
     const editorId = $('#entry-id').value;
@@ -573,6 +589,11 @@ async function fetchTitle() {
         $('#entry-metadata-status').textContent = error.message || '公開資訊讀取失敗；仍可手動收藏。';
       }
     } finally { $('#fetch-title').disabled = false; }
+    return;
+  }
+  const socialPlatform = identifySocialPlatform(url);
+  if (socialPlatform) {
+    $('#entry-metadata-status').textContent = `${socialPlatform} 這種網址目前不支援公開資料讀取；可以直接儲存連結並手動填寫標題。尚未擷取貼文正文。`;
     return;
   }
   const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 7000);

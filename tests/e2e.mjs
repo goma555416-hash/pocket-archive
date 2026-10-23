@@ -388,15 +388,15 @@ try {
   assert.ok(await cdp.evaluate("[...document.querySelectorAll('.item-card')].every(c=>c.textContent.includes('批次合成標籤'))"));
   await cdp.evaluate("document.querySelector('#selection-clear').click()");
 
-  // CORS failure still saves; successful structured metadata remains subordinate to manual type.
+  // CORS failure on a regular webpage still saves; structured metadata remains subordinate to manual type.
   await cdp.evaluate(`(() => {
     document.querySelector('#new-button').click();
-    const input=document.querySelector('#entry-url'); input.value='https://x.com/synthetic/status/232'; input.dispatchEvent(new Event('input',{bubbles:true}));
+    const input=document.querySelector('#entry-url'); input.value='https://example.org/synthetic/page/232'; input.dispatchEvent(new Event('input',{bubbles:true}));
     window.__v232Fetch=window.fetch; window.fetch=async()=>{throw new TypeError('Synthetic CORS failure')};
     document.querySelector('#fetch-title').click();
   })()`);
   await waitFor(() => cdp.evaluate("document.querySelector('#toast').textContent.includes('仍可保存網址')"), 'CORS fallback');
-  assert.equal(await cdp.evaluate("document.querySelector('#entry-type').value"), '社群');
+  assert.equal(await cdp.evaluate("document.querySelector('#entry-type').value"), '網頁');
   await cdp.evaluate(`(() => {
     window.fetch=async()=>new Response('<title>合成影片</title><meta property="og:type" content="video.other"><meta property="og:video" content="https://cdn.example.org/232.mp4">');
     document.querySelector('#fetch-title').click();
@@ -475,12 +475,33 @@ try {
   await cdp.send('Emulation.setEmulatedMedia', { features: [] });
   process.stdout.write('E2E：Toast top layer、連續計時、長訊息、完整隱藏、安全區與 reduced-motion 通過\n');
 
+  // Regression: accepted media URLs must not silently fall back to direct
+  // cross-origin HTML requests when a static deployment has no Worker.
+  await cdp.evaluate(`(() => {
+    document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
+    document.querySelector('#new-button').click();
+    const input = document.querySelector('#entry-url');
+    input.value = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    document.querySelector('#fetch-title').click();
+  })()`);
+  await waitFor(() => cdp.evaluate("document.querySelector('#entry-metadata-status').textContent.includes('Cloudflare 正式網站')"), '支援的影片在沒有後端時顯示正確提示');
+  await cdp.evaluate(`(() => {
+    const input = document.querySelector('#entry-url');
+    input.value = 'https://www.threads.com/@public/post/abc123';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    document.querySelector('#fetch-title').click();
+  })()`);
+  await waitFor(() => cdp.evaluate("document.querySelector('#entry-metadata-status').textContent.includes('Threads 這種網址目前不支援')"), '尚未支援的社群網址顯示正確提示');
+  await cdp.evaluate("document.querySelector('#entry-dialog').close()");
+  process.stdout.write('E2E：社群網址後端離線與不支援的平台不再誤顯示 CORS 失敗\\n');
+
   await waitFor(() => cdp.evaluate("Boolean(navigator.serviceWorker.controller)"), 'Service Worker 控制頁面', 16000);
   await cdp.evaluate(`(async () => {
     await caches.open('pocket-archive-v2.3.1-ai-handoff');
     await navigator.serviceWorker.register('./sw.js?upgrade-v232');
   })()`);
-  await waitFor(() => cdp.evaluate("caches.keys().then(keys=>!keys.includes('pocket-archive-v2.3.1-ai-handoff') && keys.includes('pocket-archive-v2.3.5-social-metadata'))"), '舊快取更新清除');
+  await waitFor(() => cdp.evaluate("caches.keys().then(keys=>!keys.includes('pocket-archive-v2.3.1-ai-handoff') && keys.includes('pocket-archive-v2.3.6-social-fallback'))"), '舊快取更新清除');
   assert.ok(await cdp.evaluate("caches.match('./content-model.mjs').then(Boolean)"), '新分類模組已離線快取');
   await cdp.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
   await cdp.send('Page.reload');
