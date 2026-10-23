@@ -4,11 +4,17 @@ Pocket Archive 是給 iPhone／iOS Safari、主畫面 Web App 與 Windows 瀏覽
 
 視覺維持既定 Minimal & Modern、Butter Yellow `#FFF2C9` × Periwinkle `#CBD7EF` 與 A3 實心書籤 Icon。
 
-## v2.3.4 已刪除圖片重新收件修復（Draft PR，未部署）
+## v2.3.5 公開影片來源資訊讀取（PR 審核中，尚未部署）
+
+- 新增獨立 `social-metadata.mjs`，識別經驗證的 YouTube／Shorts／TikTok 公開影片網址；使用者手動按「讀取公開影片資訊／網站標題」，Worker 向固定官方 oEmbed 端點讀取**標題、作者及允許來源的縮圖**。
+- 需要 Pocket Archive 擁有者登入；沿用 Same-Origin Session、CSRF、D1 限流。無任意公開爬蟲、代理、付費 API、新憑證或資料庫 Migration。只把標題與縮圖填入使用者的編輯視窗，保存仍須人工確認。
+- **不代表已取得影片描述、字幕、畫面或完整社群貼文正文**。Instagram、Threads、X 等維持保守的手動收藏／資料不足行為。驗收範圍與隱私界線見 [SOCIAL-METADATA-V2.3.5.md](./SOCIAL-METADATA-V2.3.5.md)。
+
+## v2.3.4 已刪除圖片重新收件修復（已部署，實機驗收通過）
 
 - 修正 iPhone 捷徑重新分享已刪除原圖時，Worker 仍以 completed SHA-256 回覆 duplicate 的問題；新分享產生新的 job/item ID，不與歷史刪除紀錄碰撞。
 - 同一次 Idempotency-Key 及仍在 ready 等待 App 收件的相同圖片繼續防重複；已完成工作若重新分享，可先回 accepted，是否新增由 App 當前 IndexedDB SHA-256 決定。
-- 不變更 Worker 收件 URL、OAuth、D1 schema、Google Drive 目錄與憑證；仍須經 Draft PR/CI 與 iPhone 實機驗收才發布。測試清單見 [UAT-IMAGE-RECAPTURE.md](./UAT-IMAGE-RECAPTURE.md)。
+- 不變更 Worker 收件 URL、OAuth、D1 schema、Google Drive 目錄與憑證；已於 2026-10-23 完成部署與 iPhone 實機驗收。測試清單見 [UAT-IMAGE-RECAPTURE.md](./UAT-IMAGE-RECAPTURE.md)。
 
 ## v2.3.3 同步安全修復（已部署、主要 UAT 通過）
 
