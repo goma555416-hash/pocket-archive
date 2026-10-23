@@ -50,6 +50,7 @@ export class PocketBackendClient {
     this.location.assign(`/api/auth/start?return_to=${encodeURIComponent(returnTo)}`);
   }
 
+  readSocialMetadata(url) { return this.request('/api/social/metadata', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) }); }
   ownerStatus() { return this.request('/api/owner/status'); }
   bootstrapOwner(token) { return this.request('/api/owner/bootstrap', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) }); }
   listSessions() { return this.request('/api/sessions'); }
