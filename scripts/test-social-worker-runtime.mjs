@@ -49,13 +49,18 @@ export default {
 };
 `;
 
+// Miniflare v5 (as installed transitively by Wrangler v4.151+) requires
+// the per-Worker module and compatibility options nested in "workers".
 const mf = new Miniflare({
-  compatibilityDate: '2026-10-17',
-  modulesRoot: root,
-  modules: [
-    { type: 'ESModule', path: fixturePath, contents: fixture },
-    { type: 'ESModule', path: sourcePath, contents: await readFile(sourcePath, 'utf8') }
-  ]
+  workers: [{
+    name: 'social-runtime-fixture',
+    compatibilityDate: '2026-10-17',
+    modulesRoot: root,
+    modules: [
+      { type: 'ESModule', path: fixturePath, contents: fixture },
+      { type: 'ESModule', path: sourcePath, contents: await readFile(sourcePath, 'utf8') }
+    ]
+  }]
 });
 try {
   const success = await mf.dispatchFetch('http://localhost/');
