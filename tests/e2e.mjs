@@ -388,15 +388,15 @@ try {
   assert.ok(await cdp.evaluate("[...document.querySelectorAll('.item-card')].every(c=>c.textContent.includes('批次合成標籤'))"));
   await cdp.evaluate("document.querySelector('#selection-clear').click()");
 
-  // CORS failure still saves; successful structured metadata remains subordinate to manual type.
+  // CORS failure on a regular webpage still saves; structured metadata remains subordinate to manual type.
   await cdp.evaluate(`(() => {
     document.querySelector('#new-button').click();
-    const input=document.querySelector('#entry-url'); input.value='https://x.com/synthetic/status/232'; input.dispatchEvent(new Event('input',{bubbles:true}));
+    const input=document.querySelector('#entry-url'); input.value='https://example.org/synthetic/page/232'; input.dispatchEvent(new Event('input',{bubbles:true}));
     window.__v232Fetch=window.fetch; window.fetch=async()=>{throw new TypeError('Synthetic CORS failure')};
     document.querySelector('#fetch-title').click();
   })()`);
   await waitFor(() => cdp.evaluate("document.querySelector('#toast').textContent.includes('仍可保存網址')"), 'CORS fallback');
-  assert.equal(await cdp.evaluate("document.querySelector('#entry-type').value"), '社群');
+  assert.equal(await cdp.evaluate("document.querySelector('#entry-type').value"), '網頁');
   await cdp.evaluate(`(() => {
     window.fetch=async()=>new Response('<title>合成影片</title><meta property="og:type" content="video.other"><meta property="og:video" content="https://cdn.example.org/232.mp4">');
     document.querySelector('#fetch-title').click();
