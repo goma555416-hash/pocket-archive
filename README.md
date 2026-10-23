@@ -4,6 +4,13 @@ Pocket Archive 是給 iPhone／iOS Safari、主畫面 Web App 與 Windows 瀏覽
 
 視覺維持既定 Minimal & Modern、Butter Yellow `#FFF2C9` × Periwinkle `#CBD7EF` 與 A3 實心書籤 Icon。
 
+## v2.4.0 Codex 實際內容證據與分類（PR 審核中，尚未部署）
+
+- Codex 批次新增可執行的 **公開文章正文讀取工具**（在使用者明確交付批次後於 Codex Node 環境執行，具嚴格 HTTPS/實際連線 IP/無轉址/大小/逾時防護，資料只寫私人工作目錄）。
+- `organized.json` schema v2 向下相容擴充每筆 `evidence`：真正文摘錄／真圖片附件 hash／只有 metadata 或讀取受阻的原因。沒有可讀內容時不能標記完成分類；未提供 evidence 的舊檔案可匯入但預設不勾選。
+- App 預覽明確顯示 **Codex 回報的**證據類別與摘錄，驗證 URL/hash，保留人工選擇/Undo/Google Drive 原始 file ID 交接。App 不能自行證明模型是否實際讀取，Codex Cloud 網路與工具需要另外驗收。
+- 不新增 AI API、D1 migration、憑證或自動網站爬蟲。功能與 UAT 詳見 [CODEX-CONTENT-EVIDENCE.md](./CODEX-CONTENT-EVIDENCE.md) 及 [UAT-CONTENT-EVIDENCE-V2.4.0.md](./UAT-CONTENT-EVIDENCE-V2.4.0.md)。
+
 ## v2.3.7 修正 Cloudflare Workers oEmbed RequestInit 相容性（PR 審核中，未部署）
 
 - 修正 Worker 對 YouTube／TikTok 官方 oEmbed 的請求使用不支援的 `redirect: 'error'`，導致 Worker 在接觸上游前即拋 `TypeError` 的問題；改為 `manual` 並明確拒絕任何 3xx 重新導向。
