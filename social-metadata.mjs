@@ -104,11 +104,16 @@ export async function fetchSocialMediaMetadata(input, { fetchImpl = fetch, timeo
   try {
     response = await fetchImpl(query.href, {
       method: 'GET', headers: { Accept: 'application/json' },
-      credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(timeoutMs)
+      // Cloudflare Workers does not support redirect: 'error' and throws
+      // TypeError *before* making a request. 'manual' lets us reject every
+      // 3xx without ever following an unexpected destination.
+      credentials: 'omit', redirect: 'manual', signal: AbortSignal.timeout(timeoutMs)
     });
   } catch {
     throw fail(503, 'social_unavailable', '公開來源暫時無法讀取；仍可收藏網址');
   }
+  if (response.status >= 300 && response.status < 400)
+    throw fail(502, 'social_redirect_rejected', '公開來源要求重新導向；已安全停止讀取，仍可保存網址');
   if (response.status === 404 || response.status === 401 || response.status === 403)
     throw fail(422, 'social_not_public', '此內容可能不公開、已下架或不支援嵌入；仍可收藏網址');
   if (!response.ok) throw fail(503, 'social_unavailable', '公開來源暫時無法讀取；仍可收藏網址');
