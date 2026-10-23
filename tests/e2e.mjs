@@ -475,6 +475,27 @@ try {
   await cdp.send('Emulation.setEmulatedMedia', { features: [] });
   process.stdout.write('E2E：Toast top layer、連續計時、長訊息、完整隱藏、安全區與 reduced-motion 通過\n');
 
+  // Regression: accepted media URLs must not silently fall back to direct
+  // cross-origin HTML requests when a static deployment has no Worker.
+  await cdp.evaluate(`(() => {
+    document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
+    document.querySelector('#new-button').click();
+    const input = document.querySelector('#entry-url');
+    input.value = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    document.querySelector('#fetch-title').click();
+  })()`);
+  await waitFor(() => cdp.evaluate("document.querySelector('#entry-metadata-status').textContent.includes('Cloudflare 正式網站')"), '支援的影片在沒有後端時顯示正確提示');
+  await cdp.evaluate(`(() => {
+    const input = document.querySelector('#entry-url');
+    input.value = 'https://www.threads.com/@public/post/abc123';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    document.querySelector('#fetch-title').click();
+  })()`);
+  await waitFor(() => cdp.evaluate("document.querySelector('#entry-metadata-status').textContent.includes('Threads 這種網址目前不支援')"), '尚未支援的社群網址顯示正確提示');
+  await cdp.evaluate("document.querySelector('#entry-dialog').close()");
+  process.stdout.write('E2E：社群網址後端離線與不支援的平台不再誤顯示 CORS 失敗\\n');
+
   await waitFor(() => cdp.evaluate("Boolean(navigator.serviceWorker.controller)"), 'Service Worker 控制頁面', 16000);
   await cdp.evaluate(`(async () => {
     await caches.open('pocket-archive-v2.3.1-ai-handoff');
