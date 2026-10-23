@@ -28,7 +28,7 @@
         <button class="nav-button" data-view="archived" type="button"><span>▤</span> 已封存 <b id="nav-count-archived">0</b></button>
         <button class="nav-button" data-view="all" type="button"><span>▦</span> 全部收藏 <b id="nav-count-all">0</b></button>
       </nav>
-      <div class="side-bottom"><p>收藏值得留下的，<br />其他的慢慢整理。</p><span class="version">LOCAL FIRST · V2.3.7</span></div>
+      <div class="side-bottom"><p>收藏值得留下的，<br />其他的慢慢整理。</p><span class="version">LOCAL FIRST · V2.4.0</span></div>
     </aside>
 
     <div class="workspace">
@@ -182,7 +182,7 @@
 
   <dialog id="ai-dialog" aria-labelledby="ai-heading" class="wide-dialog">
     <div class="entry-form"><div class="modal-heading"><div><div class="eyebrow subtle">CODEX ON DEMAND</div><h2 id="ai-heading">Codex 批次整理</h2></div><button type="button" data-close="ai-dialog" class="icon-button" aria-label="關閉">✕</button></div>
-      <ol class="workflow"><li>選取項目；未選時使用全部待整理收藏。</li><li>已連結 Drive 時送到 AI-Inbox，再一鍵複製此批次專用指令到 Codex。</li><li>App 取得结果後先驗證與預覽；原始網址、備註及附件永不覆寫。</li></ol>
+      <ol class="workflow"><li>選取項目；未選時使用全部待整理收藏。</li><li>已連結 Drive 時送到 AI-Inbox，再一鍵複製此批次專用指令到 Codex。</li><li>Codex 逐筆嘗試讀取正文、貼文或原始圖片，回報可驗證的來源與內容摘錄；只有標題時不產生猜測分類。</li><li>App 取得結果後先驗證與預覽；原始網址、備註及附件永不覆寫。</li></ol>
       <div class="action-stack horizontal"><button id="ai-cloud-export" data-requires-cloud type="button" class="button primary" disabled>送到 Drive AI-Inbox</button><button id="ai-cloud-check" data-requires-cloud type="button" class="button outline" disabled>檢查 Drive 整理結果</button></div>
       <p id="ai-cloud-status" class="privacy-note" aria-live="polite">未連結 Drive 時仍可使用下方檔案流程。</p>
       <div id="codex-launch" hidden><label>此批次 Codex 啟動指令<textarea id="codex-launch-command" rows="8" readonly></textarea></label><button id="copy-codex-launch" type="button" class="button outline">一鍵複製 Codex 指令</button></div>

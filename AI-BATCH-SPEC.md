@@ -81,3 +81,15 @@ v2.3.2 維持 schema v2；新增 inbox 欄位是相容擴充，舊 inbox／organ
 ## v2.3 啟動與批次範圍
 
 Drive 送出後，App 先驗證既有原檔的 appProperties／父資料夾／雜湊，再顯示含明確 Drive file IDs 與原檔 SHA-256 的 export_id 專用指令，不包含私人 URL／token／匯出內容；禁止 Notion／其他私人資料來源。App 保存 itemIds 並要求 Drive 結果 ID 完整一對一，原 file ID 的 parent、檔名、appProperties 與內容 export_id 必須匹配；舊工作缺 itemIds 時只從原 AI-Inbox 下載復原。缺失／不匹配／重複占位檔 fail closed。離線手動匯入仍保留既有部分結果預覽能力。
+
+## v2.4.0：Codex 逐筆讀取內容與證據閘門
+
+新版保持 **inbox / organized schema_version=2**、export_id、item.id、Drive 原檔 ID/parent/appProperties/SHA-256 驗證、人工套用及 Undo 不變。新增 **organized.items[].evidence**，詳細規格與取得方法見 [CODEX-CONTENT-EVIDENCE.md](./CODEX-CONTENT-EVIDENCE.md)。
+
+- `content_read`：Codex 回報實際讀取的 article_body/post_text/transcript/user_share_text（與 item.url 相同的 source_url，至少 24–80 字的真正文字 excerpt，observed_at）。
+- `image_read`：Codex 必須真的檢視 ZIP 原圖，且 evidence.attachment_sha256 與匯出的附件 hash 一致。只看圖片檔名／縮圖 URL 不合格。
+- `metadata_only` / `auth_required` / `blocked` / `unavailable`：只能 insufficient_data、low、空 summary 和空標籤；不能把 YouTube 標題或社群網站主網域猜測成影片／貼文內容。
+- **舊版 organized 沒有 evidence 仍可載入**，但被標記為 `legacy_unverified` 且預覽預設不勾選。新版 Codex 批次使用 `node scripts/validate-organized.mjs organized.json inbox.json|zip --require-evidence` 強制每筆附 evidence。
+- App 只能驗證所提供 evidence 的欄位、來源 URL、與原圖 SHA；**無法獨立證明 Codex 真的造訪網頁或檢視圖片**。UI 將明示「Codex 回報」，最後依使用者人工確認套用。
+
+公開文章可在有網路許可的 Codex workspace 手動執行 `node scripts/collect-content-evidence.mjs <inbox.json|zip>`。該 Node CLI 只對符合安全界線的公開 HTTPS 文章做正文擷取，最多 100 筆、8 秒逾時、1MiB HTML 上限，拒絕登入/轉址/私網/社群頁；結果只寫至被忽略的 `private-data/`。對 Threads/Instagram/X/YouTube 等不能假稱已取得正文，仍需 Codex 具有正當可用的實際內容工具或使用者提供分享文字／截圖。

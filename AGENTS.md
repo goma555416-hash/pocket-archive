@@ -10,6 +10,7 @@
 - Never commit private exports/images, tokens or credentials. Do not publicly deploy, delete user data, start paid services or access private accounts without authorization. Work around blocked external operations and document the necessary user action at the end.
 - Test in browser or automate where possible, explain any untested iOS device-only steps, keep a concise final manual UAT checklist. No claims of successful tests without executing them.
 
+- Content-first classification: read [CODEX-CONTENT-EVIDENCE.md](CODEX-CONTENT-EVIDENCE.md), attempt actual source reading per item and generate a validated evidence receipt before tagging. `metadata_only` must be `insufficient_data`; do not infer video text from oEmbed title. When network capability is absent, fail closed without guessing. Preserve no-extra-AI-API workflow.
 - AI startup must follow the App’s batch-specific export_id. Read CODEX-DRIVE-WORKFLOW.md and CODEX-ORGANIZE-PROMPT.md first. Never search Notion or other private workspaces. Missing Drive raw JSON/ZIP download, in-place content update, or read-back capability is a fail-closed blocker; never substitute another source or create a replacement result file.
 
 ## v2.3.2 content model and project skills

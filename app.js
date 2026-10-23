@@ -2,6 +2,7 @@ import { receiveCaptureJob, imageDimensions } from './capture-client.mjs';
 import { identifySocialMediaUrl, identifySocialPlatform } from './social-metadata.mjs';
 import { classifyContent, WEBPAGE_KINDS, inputTags, mergeTopicTags, compatibilityPending } from './content-model.mjs';
 import { codexLaunchCommand, cloudAiJobForReview } from './ai-launch.mjs';
+import { contentEvidenceLabel } from './content-evidence.mjs';
 import { createImageViewer } from './image-viewer.mjs';
 import {
   ALLOWED_IMAGE_TYPES, MAX_IMAGE_BYTES, normalizeUrl, displayHost,
@@ -507,11 +508,16 @@ function showSuggestionPreview(result) {
   state.pendingSuggestions = result;
   const byId = new Map(state.entries.map(entry => [entry.id, entry]));
   const { accepted, rejected } = result;
-  $('#ai-preview').innerHTML = `<p class="preview-summary"><strong>${accepted.length} 筆可預覽</strong> · ${rejected.length} 筆拒絕</p><p>只合併主題標籤；類型、內容形式與舊分類保留。</p><ul class="suggestion-list">${accepted.map(item => {
+  $('#ai-preview').innerHTML = `<p class="preview-summary"><strong>${accepted.length} 筆可預覽</strong> · ${rejected.length} 筆拒絕</p><p>只合併主題標籤；類型、內容形式與舊分類保留。沒有內容證據的建議不會預設勾選。</p><ul class="suggestion-list">${accepted.map(item => {
     const entry = byId.get(item.id);
     const merged = mergeTopicTags(entry.tags, [...item.categories, ...item.tags]);
     const added = merged.tags.filter(tag => !entry.tags.includes(tag));
-    return `<li><label><input type="checkbox" data-suggestion-id="${escapeHtml(item.id)}" checked /><span><b>${escapeHtml(entry.title)}</b><small>現有標籤：${escapeHtml(entry.tags.join('、') || '無')} → 新增：${escapeHtml(added.join('、') || '無')} · ${item.analysisStatus === 'insufficient_data' ? '資料不足' : '已分析'} · 信心 ${escapeHtml(item.confidence)}</small>${merged.pending.length ? `<small class="error-note">超過上限，保留於 AI 建議、不加入標籤：${escapeHtml(merged.pending.join('、'))}</small>` : ''}<em>${escapeHtml(item.summary || item.reason || '無摘要')}</em></span></label></li>`;
+    const evidence = item.evidence;
+    const verified = ['content_read', 'image_read'].includes(evidence.status);
+    const defaultChecked = verified && item.analysisStatus === 'completed' ? ' checked' : '';
+    const evidenceText = contentEvidenceLabel(evidence.status);
+    const sourceText = evidence.excerpt ? `<small>Codex 提供的內容證據：${escapeHtml(evidence.excerpt.slice(0, 400))}</small>` : '';
+    return `<li><label><input type="checkbox" data-suggestion-id="${escapeHtml(item.id)}"${defaultChecked} /><span><b>${escapeHtml(entry.title)}</b><small>現有標籤：${escapeHtml(entry.tags.join('、') || '無')} → 新增：${escapeHtml(added.join('、') || '無')} · ${item.analysisStatus === 'insufficient_data' ? '資料不足' : '已分析'} · 信心 ${escapeHtml(item.confidence)}</small><small>${escapeHtml(evidenceText)}（證據由 Codex 回報，App 不會自行重新爬取驗證）</small>${sourceText}${merged.pending.length ? `<small class="error-note">超過上限，保留於 AI 建議、不加入標籤：${escapeHtml(merged.pending.join('、'))}</small>` : ''}<em>${escapeHtml(item.summary || item.reason || '無摘要')}</em></span></label></li>`;
   }).join('')}</ul>${rejected.length ? `<p class="error-note">${rejected.length} 筆因未知 ID 或欄位錯誤不會套用。</p>` : ''}`;
   $('#apply-ai').hidden = accepted.length === 0;
 }

@@ -4,9 +4,13 @@ import { basename } from 'node:path';
 import { INBOX_FORMAT, SCHEMA_VERSION, readOrganized } from '../lib.mjs';
 import { readZip, decodeText } from '../archive.mjs';
 
-const [organizedPath, inboxPath] = process.argv.slice(2);
+const [organizedPath, inboxPath, evidenceFlag, ...additional] = process.argv.slice(2);
+if (additional.length || (evidenceFlag && evidenceFlag !== '--require-evidence')) {
+  process.stderr.write('未知參數；只支援 --require-evidence\n');
+  process.exit(2);
+}
 if (!organizedPath || !inboxPath) {
-  process.stderr.write('用法：node scripts/validate-organized.mjs organized.json inbox.json|inbox.zip\n');
+  process.stderr.write('用法：node scripts/validate-organized.mjs organized.json inbox.json|inbox.zip [--require-evidence]\n');
   process.exit(2);
 }
 
@@ -22,6 +26,10 @@ try {
   const inbox = JSON.parse(inboxText);
   if (inbox.format !== INBOX_FORMAT || inbox.schema_version !== SCHEMA_VERSION || typeof inbox.export_id !== 'string' || !Array.isArray(inbox.items)) throw new Error('inbox 格式或 schema_version 不正確');
   const result = readOrganized(organizedText, { exportIds: [inbox.export_id], entries: inbox.items });
+  if (evidenceFlag === '--require-evidence') {
+    const withoutEvidence = result.accepted.filter(item => item.evidence?.status === 'legacy_unverified');
+    if (withoutEvidence.length) throw new Error(`有 ${withoutEvidence.length} 筆未提供內容讀取證據，Codex 本次整理必須附 evidence`);
+  }
   if (result.rejected.length) throw new Error(`${result.rejected.length} 筆結果被拒絕：${result.rejected.slice(0, 5).map(item => `${item.id || '(no id)'} (${item.reason})`).join(', ')}`);
   const inputIds = new Set(inbox.items.map(item => item.id));
   const outputIds = new Set(result.accepted.map(item => item.id));

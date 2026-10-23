@@ -234,9 +234,12 @@ try {
 
   await cdp.evaluate("document.querySelector('#ai-button').click(); document.querySelector('#export-ai').click()");
   const exportId = await waitFor(() => cdp.evaluate(`new Promise(resolve => { const request=indexedDB.open('pocket-archive'); request.onsuccess=()=>{ const tx=request.result.transaction('meta','readonly'); const get=tx.objectStore('meta').get('ai-export-ids'); get.onsuccess=()=>resolve(get.result?.value?.[0]||''); }; })`), 'Codex export_id');
-  const organized = JSON.stringify({ format: 'pocket-archive-organized', schema_version: 2, source_export_id: exportId, items: [{ id: 'imported-e2e', analysis_status: 'completed', suggested_categories: ['閱讀'], suggested_tags: ['已分析'], summary: '依可見測試內容產生的摘要', reason: 'visible test title', confidence: 'high' }] });
+  const visibleBody = '這篇匿名文章以實際閱讀測試比較字體大小、段落間距及視覺階層對資訊可讀性的影響，包含數種網頁排版案例與清楚的實驗觀察。'.repeat(3);
+  const organized = JSON.stringify({ format: 'pocket-archive-organized', schema_version: 2, source_export_id: exportId, items: [{ id: 'imported-e2e', analysis_status: 'completed', suggested_categories: ['閱讀'], suggested_tags: ['已分析'], summary: '依可見測試內容產生的摘要', reason: '已讀取匿名文章正文', confidence: 'high', evidence: { status: 'content_read', kind: 'article_body', source_url: 'https://example.net/imported', excerpt: visibleBody, observed_at: '2026-10-23T12:00:00.000Z' } }] });
   await cdp.evaluate(`(() => { const file=new File([${JSON.stringify(organized)}],'organized.json',{type:'application/json'}); const transfer=new DataTransfer(); transfer.items.add(file); const input=document.querySelector('#organized-file'); input.files=transfer.files; input.dispatchEvent(new Event('change',{bubbles:true})); })()`);
   await waitFor(() => cdp.evaluate("!document.querySelector('#apply-ai').hidden"), 'Codex 差異預覽');
+  assert.ok(await cdp.evaluate("document.querySelector('#ai-preview').textContent.includes('Codex 回報：已讀取文字內容')"), '預覽應顯示內容證據狀態');
+  assert.equal(await cdp.evaluate("document.querySelector('[data-suggestion-id]').checked"), true, '有正文證據的分類可預設勾選');
   await cdp.evaluate("document.querySelector('#apply-ai').click()");
   await waitFor(() => cdp.evaluate("!document.querySelector('#ai-dialog').open"), 'Codex 套用完成');
   await cdp.evaluate("document.querySelector('[data-view=saved]').click()");
@@ -501,8 +504,8 @@ try {
     await caches.open('pocket-archive-v2.3.1-ai-handoff');
     await navigator.serviceWorker.register('./sw.js?upgrade-v232');
   })()`);
-  await waitFor(() => cdp.evaluate("caches.keys().then(keys=>!keys.includes('pocket-archive-v2.3.1-ai-handoff') && keys.includes('pocket-archive-v2.3.7-worker-oembed'))"), '舊快取更新清除');
-  assert.ok(await cdp.evaluate("caches.match('./content-model.mjs').then(Boolean)"), '新分類模組已離線快取');
+  await waitFor(() => cdp.evaluate("caches.keys().then(keys=>!keys.includes('pocket-archive-v2.3.1-ai-handoff') && keys.includes('pocket-archive-v2.4.0-content-evidence'))"), '舊快取更新清除');
+  assert.ok(await cdp.evaluate("caches.match('./content-evidence.mjs').then(Boolean)"), '新分類模組已離線快取');
   await cdp.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
   await cdp.send('Page.reload');
   await waitFor(() => cdp.evaluate("Boolean(document.querySelector('#page-heading'))"), '離線啟動', 12000);
