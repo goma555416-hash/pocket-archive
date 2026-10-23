@@ -20,7 +20,9 @@ App 的一般資料夾可能被擁有者分享。因此圖片收件另在 My Dri
 
 `receiving → ready → completed`，錯誤轉 `failed`，逾時轉 `expired`。建立 Drive 檔前先 generateIds 並把 file ID 寫入 D1，讓「Google 已寫入但回應斷線」仍可精確回收。新建原檔私密、內容上傳、回讀 bytes/hash 相符後才建 pending queue 與 ready 狀態；App 不可領取尚未 ready 的工作。期間斷線不回報成功。
 
-相同 Idempotency-Key 重送：ready/completed 回 duplicate，receiving 回 409，失敗 key 回 409 `upload_retry_new_key`，讓捷徑以新 UUID 重傳。相同原檔以 SHA-256 去重；job/item/attachment ID 穩定，重領跨裝置也不製造不同 ID。重送沒有再次修改原檔；採第一個安全收件的檔名。
+相同 Idempotency-Key 重送：ready/completed 回 duplicate，receiving 回 409，失敗 key 回 409 `upload_retry_new_key`，讓捷徑以新 UUID 重傳。相同原檔只在**尚待領取的 ready 工作**以 SHA-256 去重；已 completed 表示「曾被 App 接收」，不表示圖片目前仍存在本機收藏庫。完成後再次分享新 UUID，會建立**新的隨機 job/item ID**，才能在使用者刪除舊圖片後重新加入；每個工作自身的重試／跨裝置重領仍使用相同 ID。附件 ID 由內容 hash 決定，本機入庫仍以現有圖片 hash 去重：若舊圖未刪，第二筆只會在 App 端回報 duplicate。此機制不需 Worker 讀取私人收藏庫，也不會把已刪除的舊 tombstone 重新當成新工作。
+
+**可見行為差異：** 先前工作已 completed 時，新分享的捷徑可顯示 `accepted`，僅代表新工作已安全排隊，不代表收藏一定新增；App 收件後才知道圖片是否仍存在並決定 `saved` 或 `duplicate`。因此重送已收藏圖片也可能多一次安全收件與 Drive 暫存流量，依原配額控制。
 
 App 逐次只租用一筆（120 秒），驗大小、MIME、簽章及 SHA-256，在同一 IndexedDB 交易寫入 entry + 原始 blob + sync journal + dirty flag + capture receipt 後才 ack。ack／content 需要登入擁有者 Session（ack 另需 CSRF），捷徑憑證不能讀取、列舉、刪除。每次領取的 attemptCount 作為 leaseVersion，content header 與 ack body 必須匹配，防止同 Session 多分頁的舊確認。過期或別人的租約拒絕；lost ack 後重領會看到本機 receipt 並確認 duplicate。可恢復的 IndexedDB／網路錯誤回 pending，不以十次本機失敗丟棄已安全收件圖片。
 

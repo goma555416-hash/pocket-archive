@@ -76,6 +76,42 @@ test('image capture preserves bytes/name/MIME/hash, deduplicates, scopes reads a
   f.advance(86400_001); await scheduledHandler({}, f.env); assert.equal(f.files.get(row.file_id).trashed, true);
 });
 
+test('completed image can be safely recaptured after deletion without reusing a tombstoned job', async () => {
+  const f = await fixture();
+  const firstResponse = await f.upload();
+  assert.equal(firstResponse.status, 202);
+  const first = await firstResponse.json();
+
+  // Repeated uploads while the first delivery is still pending remain duplicates.
+  assert.equal((await f.upload()).status, 200);
+  const firstClaim = await (await f.request('/api/capture/jobs/claim?limit=1', 'POST')).json();
+  assert.equal(firstClaim.jobs[0].id, first.jobId);
+  assert.equal((await f.request(`/api/capture/jobs/${first.jobId}/ack`, 'POST', {
+    status: 'completed', result: 'saved', leaseVersion: 1
+  })).status, 200);
+
+  // The bookmark can now be deleted in IndexedDB / synchronized as a tombstone.
+  // The Worker holds no authoritative live-bookmark inventory, so a NEW share
+  // must enqueue a fresh job even if an older completed SHA-256 is present.
+  const newResponse = await f.upload();
+  assert.equal(newResponse.status, 202);
+  const second = await newResponse.json();
+  assert.notEqual(second.jobId, first.jobId);
+  assert.equal(second.sha256, first.sha256);
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM capture_jobs').get().n, 2);
+  assert.equal((await f.upload()).status, 200, 'while new job is pending, same hash is a duplicate');
+
+  // Same HTTP idempotency key is still a duplicate, even after a completed ack.
+  assert.equal((await f.upload(png, { 'Idempotency-Key': 'image-request-1' })).status, 200);
+  const nextClaim = await (await f.request('/api/capture/jobs/claim?limit=1', 'POST')).json();
+  assert.equal(nextClaim.jobs.length, 1);
+  assert.equal(nextClaim.jobs[0].id, second.jobId);
+  assert.equal(nextClaim.jobs[0].attachment.hash, second.sha256);
+  assert.equal((await f.request(`/api/capture/jobs/${second.jobId}/ack`, 'POST', {
+    status: 'completed', result: 'saved', leaseVersion: 1
+  })).status, 200);
+});
+
 test('single/multiple images validate MIME, signature, size, filenames, unknown-length streams and rate limits', async () => {
   const f = await fixture();
   assert.equal((await f.upload(png, { 'Content-Type': 'image/jpeg' })).status, 415);

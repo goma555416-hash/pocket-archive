@@ -4,13 +4,19 @@ Pocket Archive 是給 iPhone／iOS Safari、主畫面 Web App 與 Windows 瀏覽
 
 視覺維持既定 Minimal & Modern、Butter Yellow `#FFF2C9` × Periwinkle `#CBD7EF` 與 A3 實心書籤 Icon。
 
-## v2.3.3 同步安全修復（PR 審核中，尚未部署）
+## v2.3.4 已刪除圖片重新收件修復（Draft PR，未部署）
+
+- 修正 iPhone 捷徑重新分享已刪除原圖時，Worker 仍以 completed SHA-256 回覆 duplicate 的問題；新分享產生新的 job/item ID，不與歷史刪除紀錄碰撞。
+- 同一次 Idempotency-Key 及仍在 ready 等待 App 收件的相同圖片繼續防重複；已完成工作若重新分享，可先回 accepted，是否新增由 App 當前 IndexedDB SHA-256 決定。
+- 不變更 Worker 收件 URL、OAuth、D1 schema、Google Drive 目錄與憑證；仍須經 Draft PR/CI 與 iPhone 實機驗收才發布。測試清單見 [UAT-IMAGE-RECAPTURE.md](./UAT-IMAGE-RECAPTURE.md)。
+
+## v2.3.3 同步安全修復（已部署、主要 UAT 通過）
 
 - 修復自動同步讀取遠端日誌期間，手動儲存可能先成功、數秒後被過期同步結果整批覆寫的競態。
 - 本機 IndexedDB 寫入新增資料修訂版號；雲端同步以相同交易比對快照版本，版本過期就拒絕寫入、重新讀取並排入新一輪同步。不依賴 iPhone/Windows 是否同時開啟。
 - 編輯視窗的資料若在編輯期間改變，會明確要求重新開啟，不會假裝儲存成功。直接圖片匯入改成附件與收藏一次交易寫入。
-- 保持 Worker API、OAuth、D1 schema、同步 journal、ZIP/JSON 備份相容；**不需要 D1 migration 或重新設定 Secrets**。這個分支只經 PR/CI/實機驗收後才能部署。
-- 待實機重測：[UAT-V2.3.3.md](./UAT-V2.3.3.md)。先前的「刪除圖片後無法再次收藏」仍另列待修復，不屬本次同步修復。
+- 保持 Worker API、OAuth、D1 schema、同步 journal、ZIP/JSON 備份相容；**不需要 D1 migration 或重新設定 Secrets**。v2.3.3 已於 2026-10-22 由擁有者核准並完成 Cloudflare 部署。
+- 實機驗收紀錄：[UAT-V2.3.3.md](./UAT-V2.3.3.md)。真實同步、編輯與跨裝置測試已通過；延遲網路壓力測試依使用者決定未執行。刪圖重收列入 v2.3.4 修復。
 
 ## v2.3.2 更新
 

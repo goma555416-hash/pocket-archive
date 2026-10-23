@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PocketRepository, StaleDataError } from '../db.mjs';
 import { createEntry, createImageEntry, sha256 } from '../lib.mjs';
+import { recordLocalChanges } from '../sync.mjs';
 
 class AtomicFakeDatabase {
   constructor({ entries = [], attachments = [], attachmentError = null } = {}) {
@@ -72,6 +73,36 @@ async function imageFixture() {
   const file = new File([bytes], 'synced.png', { type: 'image/png' });
   return { entry: createImageEntry(file, await sha256(blob), 'att-atomic'), blob };
 }
+
+test('deleted capture image can be received with a new job ID while its old tombstone is preserved', async () => {
+  const database = new AtomicFakeDatabase();
+  const repository = new PocketRepository(database);
+  const { entry, blob } = await imageFixture();
+  const old = { ...entry, id: 'capture-old-image', attachment: { ...entry.attachment, id: `att-${entry.attachment.hash}` } };
+  assert.equal(await repository.commitCapture(old, blob, 'device-a'), 'saved');
+  assert.equal(await repository.commitCapture(old, blob, 'device-a'), 'duplicate', 'retry of same job is idempotent');
+
+  const beforeDelete = await repository.readSyncSnapshot();
+  const deleted = recordLocalChanges(beforeDelete.entries, [], {
+    deviceId: 'device-a', journal: beforeDelete.journal, tombstones: beforeDelete.tombstones
+  });
+  await repository.replaceBundle(deleted.entries, new Map(), {
+    expectedRevision: beforeDelete.revision,
+    deleteAttachmentIds: [old.attachment.id],
+    meta: { 'sync-journal': deleted.journal, 'sync-tombstones': deleted.tombstones }
+  });
+  assert.equal(database.entries.size, 0);
+  assert.equal(database.attachments.size, 0);
+
+  const fresh = { ...old, id: 'capture-new-image' };
+  assert.equal(await repository.commitCapture(fresh, blob, 'device-a'), 'saved', 'new job after deletion may create a new item');
+  assert.equal(await repository.commitCapture(fresh, blob, 'device-a'), 'duplicate', 'repeat of new job must not duplicate');
+  const final = await repository.readSyncSnapshot();
+  assert.deepEqual(final.entries.map(row => row.id), [fresh.id]);
+  assert.equal(final.tombstones[old.id]?.operation, 'delete', 'old tombstone must not be resurrected');
+  assert.equal(final.tombstones[fresh.id], undefined, 'new image must not be a tombstone');
+  assert.equal(database.attachments.has(old.attachment.id), true);
+});
 
 test('replaceBundle 在同一個 entries + attachments transaction 原子寫入', async () => {
   const original = createEntry({ url: 'https://example.com/original' });
