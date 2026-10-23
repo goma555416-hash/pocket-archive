@@ -4,7 +4,13 @@ Pocket Archive 是給 iPhone／iOS Safari、主畫面 Web App 與 Windows 瀏覽
 
 視覺維持既定 Minimal & Modern、Butter Yellow `#FFF2C9` × Periwinkle `#CBD7EF` 與 A3 實心書籤 Icon。
 
-## v2.3.6 公開社群連結讀取的錯誤分流修復（PR 審核中，未部署）
+## v2.3.7 修正 Cloudflare Workers oEmbed RequestInit 相容性（PR 審核中，未部署）
+
+- 修正 Worker 對 YouTube／TikTok 官方 oEmbed 的請求使用不支援的 `redirect: 'error'`，導致 Worker 在接觸上游前即拋 `TypeError` 的問題；改為 `manual` 並明確拒絕任何 3xx 重新導向。
+- 新增在真實 `workerd` 執行的回歸測試，CI 驗證 Worker RequestInit 以及不追蹤非預期網域；原有授權、SSRF 限制及收藏資料不改。
+- 仍僅取得公開標題／作者／縮圖，不提供影片內容或字幕。發版實機驗收見 [UAT-SOCIAL-WORKER-V2.3.7.md](./UAT-SOCIAL-WORKER-V2.3.7.md)；Codex 依內容分類是另外的高優先任務 Issue #21。
+
+## v2.3.6 公開社群連結讀取的錯誤分流修復（已部署，公開資料驗收中）
 
 - 修正 v2.3.5 在後端被判定不可用時，YouTube/TikTok 官方來源資訊讀取誤退回瀏覽器跨來源讀取的情形；改為先重新確認 Session 與後端狀態，並提供可理解的錯誤指引。
 - 已知社群平台（Instagram、Threads、X 等）不支援的貼文連結明確顯示「尚不支援內容讀取」；不誤以為內容已被讀取，也不呼叫未授權的網站爬蟲。
