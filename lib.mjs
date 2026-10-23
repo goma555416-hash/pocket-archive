@@ -1,4 +1,5 @@
 import { classifyContent, contentFields, preservedTags, mergeTopicTags } from './content-model.mjs';
+import { validateContentEvidence } from './content-evidence.mjs';
 export { TYPES } from './content-model.mjs';
 export const STATUSES = ['inbox', 'saved', 'archived'];
 export const STORAGE_KEY = 'pocket-archive:entries:v1';
@@ -266,7 +267,7 @@ export function createInboxEnvelope(entries, exportId = makeId('export'), export
   };
 }
 
-function validateSuggestion(raw) {
+function validateSuggestion(raw, entry) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw) || typeof raw.id !== 'string') throw new Error('建議項目缺少有效 id');
   if (!['completed', 'insufficient_data'].includes(raw.analysis_status)) throw new Error(`${raw.id} 的 analysis_status 無效`);
   const confidence = ['low', 'medium', 'high'].includes(raw.confidence) ? raw.confidence : null;
@@ -278,6 +279,7 @@ function validateSuggestion(raw) {
     tags: preservedTags(raw.suggested_tags),
     summary: String(raw.summary || '').slice(0, 1200),
     reason: String(raw.reason || '').slice(0, 800),
+    evidence: validateContentEvidence(raw.evidence, entry, raw),
     confidence
   };
 }
@@ -289,16 +291,17 @@ export function readOrganized(text, { exportIds = [], entries = [] } = {}) {
     throw new Error('分類結果格式或版本不受支援');
   }
   if (!exportIds.includes(data.source_export_id)) throw new Error('source_export_id 不符合由此裝置匯出的批次');
-  const known = new Set(entries.map(entry => entry.id));
+  const known = new Map(entries.map(entry => [entry.id, entry]));
   const seen = new Set();
   const accepted = [];
   const rejected = [];
   for (const raw of data.items.slice(0, MAX_ITEMS)) {
     try {
-      const item = validateSuggestion(raw);
-      if (seen.has(item.id)) throw new Error('結果包含重複 id');
-      seen.add(item.id);
-      if (!known.has(item.id)) { rejected.push({ id: item.id, reason: 'unknown-id' }); continue; }
+      if (!raw || typeof raw.id !== 'string') throw new Error('建議項目缺少有效 id');
+      if (seen.has(raw.id)) throw new Error('結果包含重複 id');
+      seen.add(raw.id);
+      if (!known.has(raw.id)) { rejected.push({ id: raw.id, reason: 'unknown-id' }); continue; }
+      const item = validateSuggestion(raw, known.get(raw.id));
       accepted.push(item);
     } catch (error) { rejected.push({ id: String(raw?.id || ''), reason: error.message }); }
   }
