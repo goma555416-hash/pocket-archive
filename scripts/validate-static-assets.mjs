@@ -35,6 +35,7 @@ const publicAssets = [
   'app.js',
   'lib.mjs',
   'content-model.mjs',
+  'content-evidence.mjs',
   'image-viewer.mjs',
   'ai-launch.mjs',
   'capture-client.mjs',
