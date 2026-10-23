@@ -58,7 +58,7 @@ test('fixed oEmbed endpoint returns bounded trusted metadata without HTML or cap
   assert.equal(seen[0].url.pathname, '/oembed');
   assert.equal(seen[0].url.searchParams.get('url'), `https://www.youtube.com/watch?v=${YT_ID}`);
   assert.equal(seen[0].options.credentials, 'omit');
-  assert.equal(seen[0].options.redirect, 'error');
+  assert.equal(seen[0].options.redirect, 'manual');
   assert.deepEqual(result, { provider: 'youtube', canonicalUrl: `https://www.youtube.com/watch?v=${YT_ID}`,
     title: 'Official video', author: 'Creator',
     thumbnailUrl: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
@@ -84,6 +84,15 @@ test('private/removed results and oversized or spoofed responses fail closed', a
   await assert.rejects(fetchSocialMediaMetadata(url, {
     fetchImpl: async () => Response.json({}, { status: 404 })
   }), error => error.code === 'social_not_public');
+  await assert.rejects(fetchSocialMediaMetadata(url, {
+    fetchImpl: async () => new Response(null, {
+      status: 302, headers: { Location: 'https://evil.example/collect' }
+    })
+  }), error => error.code === 'social_redirect_rejected');
+  await assert.rejects(fetchSocialMediaMetadata(url, {
+    fetchImpl: async () => new Response(null, { status: 308, headers: { Location: '/another' } })
+  }), error => error.code === 'social_redirect_rejected');
+
   await assert.rejects(fetchSocialMediaMetadata(url, {
     fetchImpl: async () => new Response('not json', { headers: { 'Content-Type': 'text/html' } })
   }), error => error.code === 'social_invalid_response');
