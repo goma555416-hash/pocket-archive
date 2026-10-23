@@ -34,7 +34,7 @@ test('social metadata route enforces login, CSRF, trusted provider and bounded r
       providerCalls++;
       assert.equal(new URL(url).origin, 'https://www.youtube.com');
       assert.equal(options.credentials, 'omit');
-      assert.equal(options.redirect, 'error');
+      assert.equal(options.redirect, 'manual');
       return Response.json({
         provider_name: 'YouTube', title: 'Synthetic published video',
         author_name: 'Synthetic creator', thumbnail_url: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg'
