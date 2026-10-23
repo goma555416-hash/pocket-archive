@@ -1,4 +1,5 @@
 import { receiveCaptureJob, imageDimensions } from './capture-client.mjs';
+import { identifySocialMediaUrl } from './social-metadata.mjs';
 import { classifyContent, WEBPAGE_KINDS, inputTags, mergeTopicTags, compatibilityPending } from './content-model.mjs';
 import { codexLaunchCommand, cloudAiJobForReview } from './ai-launch.mjs';
 import { createImageViewer } from './image-viewer.mjs';
@@ -198,6 +199,7 @@ async function localEntryMutation(action) {
 
 function openEditor(entry = null, incoming = null) {
   $('#entry-form').reset();
+  $('#entry-metadata-status').textContent = '';
   const isImage = entry?.kind === 'image';
   const urlLabel = $('#entry-url').closest('label');
   urlLabel.hidden = isImage; $('#fetch-title').hidden = isImage; $('#entry-url').required = !isImage;
@@ -546,6 +548,33 @@ async function updateStorageSummary() {
 
 async function fetchTitle() {
   let url; try { url = normalizeUrl($('#entry-url').value); } catch (error) { toast(error.message); return; }
+  const social = identifySocialMediaUrl(url);
+  if (social && state.backendAvailable) {
+    if (!state.backendSession) {
+      $('#entry-metadata-status').textContent = '公開影片資訊讀取需要先登入 Pocket Archive；不影響手動收藏。';
+      return;
+    }
+    const editorId = $('#entry-id').value;
+    $('#entry-metadata-status').textContent = '正在向公開影片平台讀取標題與作者…';
+    $('#fetch-title').disabled = true;
+    try {
+      const { metadata } = await state.backend.readSocialMetadata(url);
+      // An editor may have closed, changed records, or pasted a different URL meanwhile.
+      if (!$('#entry-dialog').open || editorId !== $('#entry-id').value ||
+          normalizeUrl($('#entry-url').value) !== url) return;
+      $('#entry-title').value = metadata.title;
+      if (metadata.thumbnailUrl) $('#entry-preview-url').value = metadata.thumbnailUrl;
+      const provider = metadata.provider === 'youtube' ? 'YouTube' : 'TikTok';
+      $('#entry-metadata-status').textContent =
+        `已讀取 ${provider} 公開資料：標題${metadata.author ? `、作者（${metadata.author}）` : ''}。未讀取影片正文、字幕或畫面；儲存前請確認標題。`;
+      toast('已取得公開影片標題；未讀取影片內容或字幕');
+    } catch (error) {
+      if ($('#entry-dialog').open && editorId === $('#entry-id').value) {
+        $('#entry-metadata-status').textContent = error.message || '公開資訊讀取失敗；仍可手動收藏。';
+      }
+    } finally { $('#fetch-title').disabled = false; }
+    return;
+  }
   const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 7000);
   try {
     const response = await fetch(url, { signal: controller.signal, credentials: 'omit', referrerPolicy: 'no-referrer' });
@@ -1020,7 +1049,7 @@ function bindEvents() {
   });
   $('#entry-form').addEventListener('submit', saveFromForm); $('#batch-form').addEventListener('submit', saveBatch); $('#image-form').addEventListener('submit', event => localEntryMutation(() => saveImages(event)));
   $('#image-form').addEventListener('submit', event => event.preventDefault());
-  $('#entry-url').addEventListener('input', () => refreshEditorType());
+  $('#entry-url').addEventListener('input', () => { $('#entry-metadata-status').textContent = ''; refreshEditorType(); });
   $('#entry-type').addEventListener('change', confirmEditorType);
   $('#confirm-type').addEventListener('click', confirmEditorType);
   $('#auto-type').addEventListener('click', () => refreshEditorType(true));

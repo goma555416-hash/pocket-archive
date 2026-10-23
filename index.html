@@ -28,7 +28,7 @@
         <button class="nav-button" data-view="archived" type="button"><span>▤</span> 已封存 <b id="nav-count-archived">0</b></button>
         <button class="nav-button" data-view="all" type="button"><span>▦</span> 全部收藏 <b id="nav-count-all">0</b></button>
       </nav>
-      <div class="side-bottom"><p>收藏值得留下的，<br />其他的慢慢整理。</p><span class="version">LOCAL FIRST · V2.3.4</span></div>
+      <div class="side-bottom"><p>收藏值得留下的，<br />其他的慢慢整理。</p><span class="version">LOCAL FIRST · V2.3.5</span></div>
     </aside>
 
     <div class="workspace">
@@ -101,7 +101,8 @@
       <input type="hidden" id="entry-id" />
       <input type="hidden" id="entry-preview-url" />
       <label>收藏網址 <span>*</span><div class="url-entry"><input type="url" id="entry-url" name="url" autocomplete="off" aria-describedby="entry-error" inputmode="url" placeholder="https://example.com/…" required /><button type="button" id="paste-url">貼上</button></div></label>
-      <button type="button" id="fetch-title" class="inline-help">在網站允許 CORS 時嘗試讀取標題</button>
+      <button type="button" id="fetch-title" class="inline-help">讀取公開影片資訊／網站標題</button>
+      <p id="entry-metadata-status" class="privacy-note" role="status" aria-live="polite"></p>
       <label>標題 <small>選填；留白將使用網站網域</small><input type="text" id="entry-title" maxlength="160" /></label>
       <div class="form-row"><label>類型<select id="entry-type" aria-describedby="entry-classification"><option>圖片</option><option>影片</option><option>社群</option><option>網頁</option></select></label><label>狀態<select id="entry-status"><option value="inbox">待整理</option><option value="saved">已整理</option><option value="archived">已封存</option></select></label></div>
       <p id="entry-classification" class="privacy-note" role="status"></p>

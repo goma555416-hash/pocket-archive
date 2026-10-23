@@ -38,6 +38,7 @@ const publicAssets = [
   'image-viewer.mjs',
   'ai-launch.mjs',
   'capture-client.mjs',
+  'social-metadata.mjs',
   'sw.js',
   'manifest.webmanifest',
   'icons/icon.svg',

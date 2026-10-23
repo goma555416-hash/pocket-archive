@@ -45,3 +45,23 @@ test('owner bootstrap is same-origin JSON and never places the secret in a URL',
   assert.deepEqual(JSON.parse(calls[1].options.body), { token: 'one-time-secret' });
   assert.equal(calls[1].url.includes('one-time-secret'), false);
 });
+
+test('social metadata uses protected same-origin POST and never places shared URLs in request path', async () => {
+  const calls = [];
+  const client = new PocketBackendClient({
+    cookieReader: name => name === '__Host-pa_csrf' ? 'csrf-test' : '',
+    fetchImpl: async (path, options) => {
+      calls.push({ path, options });
+      return Response.json({ ok: true, metadata: { provider: 'youtube', title: 'Demo', contentRead: false } });
+    }
+  });
+  const url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=private-example';
+  const result = await client.readSocialMetadata(url);
+  assert.equal(result.metadata.title, 'Demo');
+  assert.equal(calls[0].path, '/api/social/metadata');
+  assert.equal(calls[0].options.method, 'POST');
+  assert.equal(new Headers(calls[0].options.headers).get('X-PA-CSRF'), 'csrf-test');
+  assert.equal(calls[0].options.credentials, 'same-origin');
+  assert.equal(JSON.parse(calls[0].options.body).url, url);
+  assert.equal(calls[0].path.includes('private-example'), false);
+});
