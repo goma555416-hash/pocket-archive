@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { identifySocialMediaUrl, fetchSocialMediaMetadata } from '../social-metadata.mjs';
+import { identifySocialMediaUrl, identifySocialPlatform, fetchSocialMediaMetadata } from '../social-metadata.mjs';
 
 const YT_ID = 'dQw4w9WgXcQ';
 const TT_ID = '6718335390845095173';
@@ -99,4 +99,23 @@ test('private/removed results and oversized or spoofed responses fail closed', a
   await assert.rejects(fetchSocialMediaMetadata('https://threads.com/@a/post/123', {
     fetchImpl: async () => { throw new Error('must not fetch'); }
   }), error => error.code === 'unsupported_social_url');
+});
+
+test('known social URLs without supported oEmbed are identified before CORS fallback', () => {
+  const examples = [
+    ['https://youtube.com/playlist?list=PL123', 'YouTube'],
+    ['https://youtu.be/dQw4w9WgXcQ', 'YouTube'],
+    ['https://vt.tiktok.com/short-id/', 'TikTok'],
+    ['https://www.tiktok.com/@user', 'TikTok'],
+    ['https://www.instagram.com/p/example/', 'Instagram'],
+    ['https://www.threads.com/@someone/post/xyz', 'Threads'],
+    ['https://x.com/creator/status/123', 'X'],
+    ['https://www.pinterest.com/pin/1234/', 'Pinterest']
+  ];
+  for (const [url, provider] of examples) assert.equal(identifySocialPlatform(url), provider, url);
+  for (const url of [
+    'https://youtube.com.evil.test/watch?v=dQw4w9WgXcQ',
+    'https://evil.test/?redirect=https://x.com',
+    'https://example.com/article'
+  ]) assert.equal(identifySocialPlatform(url), '', url);
 });
