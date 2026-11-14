@@ -76,3 +76,59 @@ test('rejects a non-https backend override and invalid export ids', async () => 
   const bad = sink();
   assert.notEqual(await runAgentCommand(['job', 'not-an-export', '1'], { env, fetchImpl: async () => { throw new Error('no'); }, stdout: sink(), stderr: bad }), 0);
 });
+
+test('uses curl (which honours the sandbox proxy) when a proxy is configured', async () => {
+  const { pickTransport } = await import('../scripts/routine-agent.mjs');
+  assert.equal(pickTransport({ HTTPS_PROXY: 'http://proxy:8080' }), 'curl');
+  assert.equal(pickTransport({ https_proxy: 'http://proxy:8080' }), 'curl');
+  assert.equal(pickTransport({}), 'fetch');
+});
+
+test('curl arguments carry method, headers and body without leaking into the URL', async () => {
+  const { curlArgs } = await import('../scripts/routine-agent.mjs');
+  const args = curlArgs('https://backend.example/api/ai/agent/jobs/export-x/result?attempt=1', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  assert.deepEqual(args.slice(0, 3), ['-sS', '-X', 'PUT']);
+  assert.ok(args.includes('Content-Type: application/json'));
+  assert.ok(args.includes('--data-binary'));
+  assert.equal(args.at(-1), 'https://backend.example/api/ai/agent/jobs/export-x/result?attempt=1');
+  assert.equal(curlArgs('https://b.example/x', {}).includes('--data-binary'), false);
+});
+
+test('unauthorized error reports transport and proxy presence, never values', async () => {
+  const err = sink();
+  const fetchImpl = async () => Response.json({ ok: false, error: { code: 'agent_unauthorized', message: 'AI 代理憑證無效或缺少' } }, { status: 401 });
+  assert.notEqual(await runAgentCommand(['job', 'export-x', '1'], { env: { HTTPS_PROXY: 'http://user:secretpass@proxy:8080' }, fetchImpl, stdout: sink(), stderr: err }), 0);
+  const text = err.lines.join('');
+  assert.ok(text.includes('agent_unauthorized'));
+  assert.ok(text.includes('proxy_env=yes'));
+  assert.ok(!text.includes('secretpass'));
+});
+
+test('curlFetch round-trips status, binary body and request body through real curl', async t => {
+  const { spawnSync } = await import('node:child_process');
+  if (spawnSync('curl', ['--version']).status !== 0) { t.skip('curl not installed'); return; }
+  const { createServer } = await import('node:http');
+  const { curlFetch } = await import('../scripts/routine-agent.mjs');
+  const binary = Buffer.from([0, 1, 2, 255, 10, 13, 65]);
+  let received = null;
+  const server = createServer((req, res) => {
+    const chunks = []; req.on('data', c => chunks.push(c));
+    req.on('end', () => {
+      received = { method: req.method, auth: req.headers.authorization || null, type: req.headers['content-type'], body: Buffer.concat(chunks).toString() };
+      if (req.url === '/bin') { res.writeHead(200); res.end(binary); return; }
+      res.writeHead(422, { 'content-type': 'application/json' }); res.end('{"ok":false,"error":{"code":"result_evidence"}}');
+    });
+  });
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const bin = await curlFetch(`${base}/bin`);
+    assert.equal(bin.status, 200);
+    assert.deepEqual(Buffer.from(await bin.arrayBuffer()), binary);
+    assert.equal(received.auth, null);
+    const put = await curlFetch(`${base}/result`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{"items":[]}' });
+    assert.equal(put.status, 422);
+    assert.equal((await put.json()).error.code, 'result_evidence');
+    assert.deepEqual(received, { method: 'PUT', auth: null, type: 'application/json', body: '{"items":[]}' });
+  } finally { server.close(); }
+});
