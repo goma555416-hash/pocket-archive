@@ -35,3 +35,26 @@
 ## v2.3.2 主題語意
 
 維持上方 export_id、schema v2、item ID、原 file ID、metadata、SHA-256 與回讀驗證。主要類型只保留圖片／影片／社群／網頁；主題輸出到 suggested_tags，不新增 AI 類型建議。舊 suggested_categories 仍可相容匯入並當作標籤候選；不覆寫人工類型、webpageKind 或原 category。此版本開發只用合成測試，不代表另行授權操作真實 Drive。
+
+## Claude Code 執行時（能力實測紀錄與備援）
+
+本流程所有步驟、驗證與 fail-closed 條件不變；「Codex」指實際執行整理的 agent。Claude Code 必須依**當下 session 實際載入的工具定義**判斷能力，不能以「有 Google Drive 連接器」代替。
+
+2026-11-14 在 Claude Code（Windows 桌面版）檢查到的 Google Drive 連接器能力：
+
+| 需求 | 對應工具 | 結果 |
+| --- | --- | --- |
+| 以 file ID 下載 raw JSON/ZIP | `download_file_content`（base64） | 具備 |
+| 以 file ID 讀 parent、name、MIME | `get_file_metadata` | 具備；appProperties 是否回傳需實測，缺少時依上方 v2.3.1 規則 |
+| 保留原 file ID 覆寫**檔案內容** | `update_file` | **不具備**：只能改標題、parent、星號、鎖定等 metadata |
+| 回讀寫入後的 raw bytes | `download_file_content` | 具備，但沒有內容寫入可供回讀 |
+
+因此目前在 Claude Code 中，Drive 自動交換**第 6、7 步必定 fail closed**：
+
+1. 開始時就先做能力檢查：內容覆寫能力缺少已可確定，所以在下載收藏內容之前停止，先回報並詢問。只有使用者同意改用本機交接後，才繼續第 2–5 步（精確 file ID、metadata、SHA-256、schema、item ID 驗證，以及逐筆讀取與分類）。
+2. 不得用 `update_file` 改名、移動或鎖定占位檔來「代替寫入」，不得用 `create_file` 另建結果檔，占位檔維持 `status: "pending"`。
+3. 回報「未執行 Drive 寫回：連接器缺少保留 file ID 的內容覆寫能力」，並詢問使用者是否改用本機交接。
+4. 使用者同意後：把通過 `node scripts/validate-organized.mjs <organized> <inbox> --require-evidence` 的結果寫到 `private-data/organized-<export_id>.json`，由使用者在 App 用「匯入 organized JSON」預覽、勾選、套用。回報時明確標示「本機交接，不是自動 Drive 交換」，並附完成數、`insufficient_data` 數與檔案路徑。
+5. 本機交接後 Drive 占位檔仍是 pending；App 端「檢查 Drive 結果」會顯示待處理，屬預期行為，不是錯誤。
+
+若日後的連接器提供保留 file ID 的內容覆寫（例如帶有內容/`file_uri` 參數的 update），須先用合成測試檔完成「覆寫 → 回讀 SHA-256 相符」再更新本表，才可恢復完整 Drive 流程。

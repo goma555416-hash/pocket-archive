@@ -5,3 +5,7 @@
 ## v2.3 AI 入口
 
 開發本儲存庫與執行私人 AI 整理是不同授權。整理時用 App「送到 Drive AI-Inbox」後產生的批次專用指令，先讀 AGENTS.md／CODEX-DRIVE-WORKFLOW.md／CODEX-ORGANIZE-PROMPT.md；不得搜尋 Notion。只有在具備 raw JSON/ZIP download、原 file ID update 與回讀能力時執行，否則明確停止，保留本機檔案流程。
+
+## Claude Code
+
+在 Claude Code 中開啟本儲存庫時，`CLAUDE.md` 會自動載入 `AGENTS.md`，不需要另外貼上啟動訊息。開發任務照上方規則執行；AI 整理請先看 `CODEX-DRIVE-WORKFLOW.md` 的「Claude Code 執行時」，目前 Drive 寫回會 fail closed，需改用本機交接。

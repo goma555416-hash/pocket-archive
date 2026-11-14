@@ -54,3 +54,7 @@ node scripts/validate-organized.mjs organized.json pocket-archive-inbox-YYYY-MM-
 若輸入是 ZIP，驗證器也接受 ZIP 作為第二個參數。只有驗證通過才把 `organized.json` 交回使用者；不要修改原始匯出檔。
 
 Drive 批次必須使用 App 產生的 export_id 專用指令。開始前驗證 raw download／原 file ID 更新與回讀能力，任何缺少皆 fail closed。只更新既有 organized-<export_id>.json，不另建檔；回讀結果驗證後才報完成，App 仍先預覽與人工套用。
+
+## 給 Claude Code 的補充
+
+本指令同樣適用於 Claude Code，「Codex」指實際執行整理的 agent。Claude Code 處理本機交付的匯出檔時，原始檔與 `organized.json` 放在 `private-data/`（已被 .gitignore 與 .assetsignore 排除），完成驗證後告知使用者檔案路徑，由使用者在 App 匯入；不得 commit。Drive 交接的能力限制見 `CODEX-DRIVE-WORKFLOW.md` 的「Claude Code 執行時」。
