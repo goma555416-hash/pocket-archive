@@ -72,7 +72,7 @@ try {
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(4173, '127.0.0.1', resolve); });
   browser = spawn(chromiumPath, ['--headless=new', '--no-sandbox', '--disable-gpu', '--remote-debugging-port=9223', `--user-data-dir=${profile}`, 'about:blank'], { cwd: root, stdio: 'ignore' });
   await new Promise((resolve, reject) => { browser.once('spawn', resolve); browser.once('error', reject); });
-  const version = await waitFor(async () => { const response = await fetch(`${DEBUG}/json/version`); return response.ok && response.json(); }, 'Chromium DevTools');
+  const version = await waitFor(async () => { const response = await fetch(`${DEBUG}/json/version`); return response.ok && response.json(); }, 'Chromium DevTools', 45000); // CI runners can be slow to start Chromium
   assert.match(version.Browser, /Chrome|Chromium|Edg(?:e)?\//);
   const target = await fetch(`${DEBUG}/json/new?about:blank`, { method: 'PUT' }).then(response => response.json());
   cdp = new Cdp(target.webSocketDebuggerUrl); await cdp.send('Page.enable'); await cdp.send('Runtime.enable'); await cdp.send('Network.enable');
