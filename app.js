@@ -1,7 +1,8 @@
 import { receiveCaptureJob, imageDimensions } from './capture-client.mjs';
 import { identifySocialMediaUrl, identifySocialPlatform } from './social-metadata.mjs';
 import { classifyContent, WEBPAGE_KINDS, inputTags, mergeTopicTags, compatibilityPending } from './content-model.mjs';
-import { codexLaunchCommand, cloudAiJobForReview, markCloudJobApplied } from './ai-launch.mjs';
+import { markCloudJobApplied } from './ai-launch.mjs';
+import { aiJobStatusView, currentAiJob, hasReadyAiJob, reviewExportIds } from './ai-jobs-client.mjs';
 import { contentEvidenceLabel } from './content-evidence.mjs';
 import { createImageViewer } from './image-viewer.mjs';
 import {
@@ -23,7 +24,7 @@ const $$ = selector => [...document.querySelectorAll(selector)];
 const state = {
   repository: null, entries: [], view: 'inbox', query: '', type: 'all', sort: 'new', selected: new Set(),
   batch: [], images: [], pendingImport: null, pendingSuggestions: null, thumbnailUrls: [],
-  deviceId: '', syncJournal: {}, tombstones: {}, cloudConflicts: [], cloudBackups: [], cloudJobs: [],
+  deviceId: '', syncJournal: {}, tombstones: {}, cloudConflicts: [], cloudBackups: [], cloudJobs: [], aiJobs: [], aiConfigured: null, aiPollTimer: null, reviewAiExportId: '',
   cloudSettings: { clientId: '', autoBackup: true, retention: 5, encryption: false },
   cloudPassphrase: '', auth: null, drive: null, workspace: null, backupService: null, aiExchange: null, syncService: null,
   cloudUser: null, cloudBusy: false, backupTimer: null, syncTimer: null,
@@ -532,6 +533,7 @@ async function applyOrganized() {
     if (!await persistEntries(result.entries)) return;
     const closed = markCloudJobApplied(state.cloudJobs, state.pendingSuggestions.sourceExportId);
     if (closed.changed) { state.cloudJobs = closed.jobs; await state.repository.setMeta('cloud-ai-jobs', state.cloudJobs); }
+    await reportAiApplied(state.pendingSuggestions.sourceExportId);
     state.pendingSuggestions = null; render(); $('#ai-preview').innerHTML = ''; $('#apply-ai').hidden = true; closeDialog('ai-dialog'); toast(`已套用 ${result.applied} 筆；可從備份視窗單次復原 ✓`);
   } catch (error) { toast(error.message, 7000); }
 }
@@ -649,6 +651,7 @@ function renderCloudStatus() {
   $('#legacy-google-settings').hidden = state.backendAvailable;
   $('#device-sessions-section').hidden = !state.backendAvailable || !state.backendSession;
   $('#shortcut-section').hidden = !state.backendAvailable || !state.backendSession;
+  renderAiStatus();
   const ownerSetup = $('#owner-bootstrap-section');
   if (ownerSetup) {
     ownerSetup.hidden = !state.backendAvailable || !state.backendOwner || state.backendOwner.configured;
@@ -872,7 +875,7 @@ async function restoreBackendSession() {
     await state.repository.setMeta('drive-workspace', state.workspace); scheduleAutoBackup(900); scheduleAutoSync(1500);
   } catch (error) { state.drive = null; state.workspace = null; $('#cloud-backup-note').textContent = `Drive 授權需處理：${error.message}`; }
   await Promise.all([refreshBackendSessions(), refreshCaptureCredentials()]); renderCloudStatus(); await importCaptureJobs();
-  if (cloudConnected() && state.cloudJobs.some(job => job.status !== 'applied')) setTimeout(() => checkCloudAi(), 2600);
+  if (state.backendSession) setTimeout(() => refreshAiJobs(), 2600);
 }
 
 function scheduleAutoBackup(delayMs = 6000) {
@@ -1017,54 +1020,114 @@ async function handleConflictChoice(index, choice) {
   render(); renderCloudStatus(); toast('衝突選擇已保存，請再次同步傳送結果');
 }
 
-async function enqueueCloudAi() {
-  if (!cloudConnected() || state.cloudBusy) return;
-  const chosen = state.selected.size ? state.entries.filter(entry => state.selected.has(entry.id)) : state.entries.filter(entry => entry.status === 'inbox');
-  if (!chosen.length) { toast('沒有可送出的待整理項目'); return; }
-  state.cloudBusy = true; renderCloudStatus();
-  try {
-    const job = await state.aiExchange.enqueue(chosen, state.repository);
-    const evidence = await state.aiExchange.launchEvidence({ exportId: job.exportId, inboxFileId: job.inboxFile.id, resultFileId: job.resultFile?.id || job.resultFileId, itemIds: job.itemIds });
-    const exportIds = await state.repository.getMeta('ai-export-ids', []);
-    if (job.exportId && !exportIds.includes(job.exportId)) await state.repository.setMeta('ai-export-ids', [job.exportId, ...exportIds].slice(0, 50));
-    if (!job.duplicate || (job.resultFileId && !state.cloudJobs.some(item => item.exportId === job.exportId))) {
-      state.cloudJobs.unshift({ exportId: job.exportId, inboxFileId: job.inboxFile.id, resultFileId: job.resultFile?.id || job.resultFileId, itemIds: job.itemIds, launchEvidence: evidence, createdAt: new Date().toISOString(), status: 'pending' });
-      state.cloudJobs = state.cloudJobs.slice(0, 50);
-    } else {
-      const retainedJob = state.cloudJobs.find(item => item.exportId === job.exportId);
-      retainedJob.launchEvidence = evidence; retainedJob.itemIds = job.itemIds;
-    }
-    await state.repository.setMeta('cloud-ai-jobs', state.cloudJobs);
-    $('#ai-cloud-status').textContent = job.duplicate ? '相同批次已存在，未重複建立。請複製此批次指令。' : `已送出 ${chosen.length} 筆。請複製此批次指令到 Codex。`;
-    state.activeAiExportId = job.exportId; await state.repository.setMeta('active-ai-export-id', job.exportId);
-    $('#codex-launch-command').value = codexLaunchCommand(job.exportId, evidence); $('#codex-launch').hidden = false;
-    toast(job.duplicate ? '相同 AI 工作已存在' : '已建立 Drive AI-Inbox 與結果占位檔 ✓');
-  } catch (error) { toast(`送到 AI-Inbox 失敗：${error.message}`, 8500); }
-  finally { state.cloudBusy = false; renderCloudStatus(); }
+function cloudAiAvailable() { return Boolean(state.backendSession && cloudConnected()); }
+
+function renderAiStatus() {
+  const statusLine = $('#ai-cloud-status'); if (!statusLine) return;
+  const job = currentAiJob(state.aiJobs);
+  const view = aiJobStatusView(job);
+  const retry = $('#ai-retry'); if (retry) retry.hidden = !view.canRetry;
+  const send = $('#ai-cloud-export'); if (send) send.disabled = !cloudAiAvailable() || state.cloudBusy;
+  const badge = $('#ai-badge'); const aiButton = $('#ai-button');
+  const ready = hasReadyAiJob(state.aiJobs);
+  if (badge) badge.hidden = !ready;
+  if (aiButton) aiButton.setAttribute('aria-label', ready ? 'AI 整理（有結果）' : 'AI 整理');
+  if (!state.backendSession) { statusLine.dataset.tone = 'idle'; statusLine.textContent = '雲端整理需要登入 Pocket Archive 後端；仍可使用下方備用手動流程。'; return; }
+  if (state.aiConfigured === false) { statusLine.dataset.tone = 'idle'; statusLine.textContent = '雲端整理尚未設定；請依 CLOUD-AI-SETUP.md 完成設定，或使用下方備用手動流程。'; return; }
+  statusLine.dataset.tone = view.tone;
+  statusLine.textContent = job ? `${view.label}　${view.detail}` : '選取項目後按「送出整理」；未選取時送出全部待整理收藏。';
 }
 
-async function checkCloudAi() {
-  if (!cloudConnected() || state.cloudBusy) return;
-  let job;
-  try { job = cloudAiJobForReview(state.cloudJobs, state.activeAiExportId); } catch (error) { toast(error.message); return; }
-  if (job?.status === 'applied') { toast('此批次已套用，未重複處理'); return; }
-  if (!job) { toast('沒有由此裝置建立的待檢查 AI 工作'); return; }
-  state.cloudBusy = true; renderCloudStatus();
+async function flushAppliedAiJobs() {
+  const pending = await state.repository.getMeta('ai-applied-pending', []);
+  if (!pending.length) return;
+  const remaining = [];
+  for (const exportId of pending) {
+    try { await state.backend.markAiJobApplied(exportId); } catch (error) { if (error.status !== 404 && error.code !== 'invalid_state') remaining.push(exportId); }
+  }
+  await state.repository.setMeta('ai-applied-pending', remaining);
+}
+
+function aiDialogOpen() { return Boolean($('#ai-dialog')?.open); }
+
+async function refreshAiJobs({ loadResult = true } = {}) {
+  clearTimeout(state.aiPollTimer);
+  if (!state.backendSession || !state.backend) { renderAiStatus(); return; }
   try {
-    const exportIds = await state.repository.getMeta('ai-export-ids', []);
-    const checked = await state.aiExchange.readResult(job, state.entries, exportIds);
-    if (checked.pending) { $('#ai-cloud-status').textContent = '最新結果仍是待處理占位檔；Codex 完成後再檢查。'; toast('Codex 結果尚未寫回'); return; }
-    job.status = 'ready'; await state.repository.setMeta('cloud-ai-jobs', state.cloudJobs);
-    showSuggestionPreview(checked.result); $('#ai-cloud-status').textContent = '已取得並驗證雲端結果，請逐項預覽後套用。';
+    const result = await state.backend.listAiJobs();
+    state.aiJobs = result.jobs || []; state.aiConfigured = result.configured !== false;
+    await flushAppliedAiJobs();
+  } catch (error) { renderAiStatus(); return; }
+  renderAiStatus();
+  const job = currentAiJob(state.aiJobs);
+  if (loadResult && job?.status === 'ready' && aiDialogOpen() && state.reviewAiExportId !== job.exportId && cloudConnected()) await loadAiResult(job);
+  if (aiDialogOpen() && ['queued', 'running'].includes(job?.status)) state.aiPollTimer = setTimeout(() => refreshAiJobs(), 30_000);
+}
+
+async function loadAiResult(job) {
+  try {
+    const localIds = await state.repository.getMeta('ai-export-ids', []);
+    const checked = await state.aiExchange.readResult(job, state.entries, reviewExportIds(localIds, job));
+    if (checked.pending) { $('#ai-cloud-status').textContent = '結果尚未寫回，稍後再看。'; return; }
+    state.reviewAiExportId = job.exportId;
+    showSuggestionPreview(checked.result);
   } catch (error) { toast(`取得 AI 結果失敗：${error.message}`, 8500); }
-  finally { state.cloudBusy = false; renderCloudStatus(); }
+}
+
+async function enqueueCloudAi() {
+  if (state.cloudBusy) return;
+  if (!cloudAiAvailable()) { renderAiStatus(); toast('雲端整理需要登入 Pocket Archive 後端並連結 Google Drive'); return; }
+  const chosen = state.selected.size ? state.entries.filter(entry => state.selected.has(entry.id)) : state.entries.filter(entry => entry.status === 'inbox');
+  if (!chosen.length) { toast('沒有可送出的待整理項目'); return; }
+  state.cloudBusy = true; renderCloudStatus(); renderAiStatus();
+  try {
+    const listed = await state.backend.listAiJobs();
+    state.aiJobs = listed.jobs || []; state.aiConfigured = listed.configured !== false;
+    if (!state.aiConfigured) { renderAiStatus(); toast('雲端整理尚未設定'); return; }
+    const job = await state.aiExchange.enqueue(chosen, state.repository);
+    const resultFileId = job.resultFile?.id || job.resultFileId;
+    const evidence = await state.aiExchange.launchEvidence({ exportId: job.exportId, inboxFileId: job.inboxFile.id, resultFileId, itemIds: job.itemIds });
+    const exportIds = await state.repository.getMeta('ai-export-ids', []);
+    if (!exportIds.includes(job.exportId)) await state.repository.setMeta('ai-export-ids', [job.exportId, ...exportIds].slice(0, 50));
+    const created = await state.backend.createAiJob({
+      exportId: job.exportId, inboxFileId: job.inboxFile.id, resultFileId,
+      inboxFolderId: state.workspace.aiInbox, resultsFolderId: state.workspace.aiResults,
+      itemIds: job.itemIds, inboxSha256: evidence.inboxSha256, pendingSha256: evidence.pendingSha256, deviceId: state.deviceId
+    });
+    state.aiJobs = [created.job, ...state.aiJobs.filter(item => item.exportId !== created.job.exportId)];
+    toast(created.duplicate ? '相同批次已送出，未重複建立' : `已送出 ${chosen.length} 筆，Claude 會在雲端整理 ✓`);
+  } catch (error) { toast(`送出整理失敗：${error.message}`, 8500); }
+  finally { state.cloudBusy = false; renderCloudStatus(); renderAiStatus(); }
+  refreshAiJobs({ loadResult: false });
+}
+
+async function retryCloudAi() {
+  const job = currentAiJob(state.aiJobs);
+  if (!job || job.status !== 'failed' || state.cloudBusy) return;
+  state.cloudBusy = true; renderAiStatus();
+  try { await state.backend.retryAiJob(job.exportId); toast('已重新送出整理'); }
+  catch (error) { toast(`重試失敗：${error.message}`, 7000); }
+  finally { state.cloudBusy = false; }
+  refreshAiJobs({ loadResult: false });
+}
+
+async function reportAiApplied(exportId) {
+  if (!exportId || !state.aiJobs.some(job => job.exportId === exportId)) return;
+  try { await state.backend.markAiJobApplied(exportId); }
+  catch {
+    const pending = await state.repository.getMeta('ai-applied-pending', []);
+    if (!pending.includes(exportId)) await state.repository.setMeta('ai-applied-pending', [...pending, exportId].slice(-50));
+  }
+  state.aiJobs = state.aiJobs.map(job => job.exportId === exportId ? { ...job, status: 'applied' } : job);
+  state.reviewAiExportId = '';
+  renderAiStatus();
 }
 
 function bindEvents() {
   $('#new-button').addEventListener('click', () => openEditor()); $('#mobile-new').addEventListener('click', () => openEditor()); $('#empty-add').addEventListener('click', () => openEditor());
   $('#batch-button').addEventListener('click', () => { $('#batch-form').reset(); state.batch = []; $('#batch-preview').innerHTML = ''; $('#batch-save').disabled = true; openDialog('batch-dialog'); });
   $('#image-button').addEventListener('click', () => { $('#image-form').reset(); state.images = []; $('#image-preview').innerHTML = ''; $('#image-save').disabled = true; openDialog('image-dialog'); });
-  $('#backup-button').addEventListener('click', () => { openDialog('backup-dialog'); updateStorageSummary(); }); $('#ai-button').addEventListener('click', () => { const job = state.cloudJobs.find(item => item.exportId === state.activeAiExportId) || state.cloudJobs.find(item => item.status !== 'applied'); if (job) { state.activeAiExportId = job.exportId; $('#codex-launch-command').value = codexLaunchCommand(job.exportId, job.launchEvidence); $('#codex-launch').hidden = false; } openDialog('ai-dialog'); });
+  $('#backup-button').addEventListener('click', () => { openDialog('backup-dialog'); updateStorageSummary(); }); $('#ai-button').addEventListener('click', () => { openDialog('ai-dialog'); renderAiStatus(); refreshAiJobs(); });
   $('#cloud-button').addEventListener('click', () => { openDialog('cloud-dialog'); if (!state.backendAvailable) preloadGoogleIdentity(); renderCloudStatus(); if (cloudConnected()) { refreshCloudBackups(); refreshBackendSessions(); } });
   $$('[data-close]').forEach(button => button.addEventListener('click', () => closeDialog(button.dataset.close)));
   $$('dialog').forEach(dialog => {
@@ -1097,8 +1160,7 @@ function bindEvents() {
   $('#cloud-backup-now').addEventListener('click', () => runCloudBackup(false)); $('#cloud-sync-now').addEventListener('click', () => syncNow(false));
   $('#cloud-refresh-backups').addEventListener('click', refreshCloudBackups); $('#cloud-encryption').addEventListener('change', renderCloudStatus);
   $('#cloud-passphrase').addEventListener('input', event => { state.cloudPassphrase = event.target.value; });
-  $('#copy-codex-launch').addEventListener('click', async () => { try { await navigator.clipboard.writeText($('#codex-launch-command').value); toast('已複製此批次 Codex 指令'); } catch { $('#codex-launch-command').focus(); $('#codex-launch-command').select(); toast('已選取指令，請複製'); } });
-  $('#ai-cloud-export').addEventListener('click', enqueueCloudAi); $('#ai-cloud-check').addEventListener('click', checkCloudAi);
+  $('#ai-cloud-export').addEventListener('click', enqueueCloudAi); $('#ai-retry')?.addEventListener('click', retryCloudAi);
   $('#persist-storage').addEventListener('click', async () => { const persisted = await navigator.storage?.persist?.(); toast(persisted ? '瀏覽器已同意保留本機資料' : '瀏覽器未授予保留權限；請定期下載備份'); });
   $('#search-input').addEventListener('input', event => { state.query = event.target.value.trim(); render(); }); $('#type-filter').addEventListener('change', event => { state.type = event.target.value; render(); }); $('#sort-filter').addEventListener('change', event => { state.sort = event.target.value; render(); });
   $('#select-visible').addEventListener('change', event => { filteredEntries().forEach(entry => event.target.checked ? state.selected.add(entry.id) : state.selected.delete(entry.id)); render(); }); $('#selection-clear').addEventListener('click', () => { state.selected.clear(); render(); });
@@ -1131,7 +1193,7 @@ function bindEvents() {
   window.addEventListener('pagehide', () => { imageViewer.dispose(); thumbnailGeneration++; state.thumbnailUrls.forEach(url => URL.revokeObjectURL(url)); state.thumbnailUrls = []; });
   window.addEventListener('pageshow', event => { if (event.persisted) loadThumbnails(); });
   window.addEventListener('online', () => { if (state.backendSession) importCaptureJobs(); if (cloudConnected()) { scheduleAutoBackup(1200); scheduleAutoSync(1700); toast('網路已恢復，將補傳待備份與同步變更'); } });
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && state.backendSession) importCaptureJobs(); if (document.visibilityState === 'visible' && cloudConnected()) { scheduleAutoBackup(1500); scheduleAutoSync(2100); } });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && state.backendSession) { importCaptureJobs(); refreshAiJobs(); } if (document.visibilityState === 'visible' && cloudConnected()) { scheduleAutoBackup(1500); scheduleAutoSync(2100); } });
 }
 
 function handleLegacyShareQuery() {
