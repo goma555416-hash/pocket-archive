@@ -16,7 +16,7 @@
 
 \`node scripts/collect-content-evidence.mjs <private-inbox.json|private-inbox.zip>\`
 
-此程式只讀 **公開 HTTPS 網頁的 article/main 正文**，每次最多 100 筆，8 秒逾時、1 MiB HTML 上限。針對 DNS 實際連線地址拒絕內網／保留 IPv4、IP 字面網址、帶帳密網址及特殊／社群域名；不跟隨重新導向、無 Cookie、無登入、無 Token、無憑證。必須由 Codex 明確啟動，**不在 App/Worker 背景執行**。輸出 \`private-data/content-evidence-<export_id>.json\`，已由 .gitignore 排除。若 Cloud 環境無網路，輸出 unavailable，不得聲稱全文取得成功。HTML 擷取是保守式簡易正文提取，不保證完整篇章或動態網站。
+此程式只讀 **公開 HTTPS 網頁的 article/main 正文**，每次最多 100 筆，8 秒逾時、1 MiB HTML 上限。針對 DNS 實際連線地址拒絕內網／保留 IPv4、IP 字面網址、帶帳密網址及特殊／社群域名；重新導向只跟隨同一網域內最多 3 次，一律用 https，每一步重新檢查；導向驗證碼／機器人檢查頁時不跟隨，記為 `auth_required`（reason `captcha_required`），不得嘗試繞過。無 Cookie、無登入、無 Token、無憑證。若環境設有 `HTTPS_PROXY`（Claude 雲端環境只能經代理上網），改用 curl 經代理連線；此時無法在本機做 DNS 位址檢查，改由網址檢查與 curl 的 https-only、不自動導向、逾時與大小上限把關（代理後方本來就連不到私人網路）。必須由 Codex 明確啟動，**不在 App/Worker 背景執行**。輸出 \`private-data/content-evidence-<export_id>.json\`，已由 .gitignore 排除。若 Cloud 環境無網路，輸出 unavailable，不得聲稱全文取得成功。HTML 擷取是保守式簡易正文提取，不保證完整篇章或動態網站。
 
 對於 status=content_read 的結果，Codex 要讀實際 excerpt／若可用也讀正文並核對主題；若只有零碎模板、站內導航、貼文外框、登入提示，**降為 metadata_only**。證據只應記錄確實讀到的內容。
 
