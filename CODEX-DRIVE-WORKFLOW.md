@@ -54,7 +54,9 @@
 1. 開始時就先做能力檢查：內容覆寫能力缺少已可確定，所以在下載收藏內容之前停止，先回報並詢問。只有使用者同意改用本機交接後，才繼續第 2–5 步（精確 file ID、metadata、SHA-256、schema、item ID 驗證，以及逐筆讀取與分類）。
 2. 不得用 `update_file` 改名、移動或鎖定占位檔來「代替寫入」，不得用 `create_file` 另建結果檔，占位檔維持 `status: "pending"`。
 3. 回報「未執行 Drive 寫回：連接器缺少保留 file ID 的內容覆寫能力」，並詢問使用者是否改用本機交接。
-4. 使用者同意後：把通過 `node scripts/validate-organized.mjs <organized> <inbox> --require-evidence` 的結果寫到 `private-data/organized-<export_id>.json`，由使用者在 App 用「匯入 organized JSON」預覽、勾選、套用。回報時明確標示「本機交接，不是自動 Drive 交換」，並附完成數、`insufficient_data` 數與檔案路徑。
-5. 本機交接後 Drive 占位檔仍是 pending；App 端「檢查 Drive 結果」會顯示待處理，屬預期行為，不是錯誤。
+4. 使用者同意後：把通過 `node scripts/validate-organized.mjs <organized> <inbox> --require-evidence` 的結果寫到 `private-data/organized-<export_id>.json`，由使用者在 App 用「匯入 organized.json」預覽、勾選、套用。回報時明確標示「本機交接，不是自動 Drive 交換」，並附完成數、`insufficient_data` 數與檔案路徑。
+5. 本機交接後 Drive 占位檔仍是 pending，這是預期行為。使用者在 App 套用同一 export_id 的結果後，App 會把該 AI 工作標成「已套用」，之後不會再顯示待處理。
+
+**建議做法**：使用者以 Windows 處理 AI 整理時，直接走本機檔案流程，不必先送到 Drive AI-Inbox：Windows App「離線／手動檔案流程」→「下載待整理批次」→ Claude 整理並驗證，輸出 `private-data/organized-<export_id>.json` →「匯入 organized.json」預覽、勾選、套用 → 收藏自動同步到 iPhone。設計依據見 `docs/superpowers/specs/2026-11-14-windows-local-ai-flow-design.md`。
 
 若日後的連接器提供保留 file ID 的內容覆寫（例如帶有內容/`file_uri` 參數的 update），須先用合成測試檔完成「覆寫 → 回讀 SHA-256 相符」再更新本表，才可恢復完整 Drive 流程。

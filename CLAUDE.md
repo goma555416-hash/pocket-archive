@@ -8,7 +8,8 @@
 
 - 文件中提到「Codex」執行 AI 分類、讀取來源、產生結果的地方，在此由 Claude Code 擔任，流程與限制完全相同（不另接 AI API、fail closed、不搜尋 Notion 或其他私人工作區）。
 - `CODEX-*.md` 檔名保持不變，照樣閱讀並遵守。
-- AI 整理前先讀 `CODEX-DRIVE-WORKFLOW.md` 的「Claude Code 執行時」：目前的 Google Drive 連接器 `update_file` 只能改 metadata，無法保留 file ID 覆寫內容，Drive 寫回必定 fail closed。不得改名／移動占位檔或另建結果檔代替；經使用者同意才改用 `private-data/` 本機交接。
+- **AI 整理的標準做法是 Windows 本機檔案流程**（使用者分工：iPhone 只收藏與查看，Windows 負責整理與套用）：使用者在 Windows App「下載待整理批次」→ Claude 依 `CODEX-ORGANIZE-PROMPT.md`、`CODEX-CONTENT-EVIDENCE.md` 逐筆取得內容與證據後分類，結果寫到 `private-data/organized-<export_id>.json`，並以 `node scripts/validate-organized.mjs <organized> <inbox> --require-evidence` 驗證通過 → 告訴使用者檔案路徑，由使用者在 App「匯入 organized.json」預覽、勾選、套用 → 自動同步到 iPhone。批次檔通常在使用者的「下載」資料夾，找不到就問，不要自行搜尋其他位置。
+- Drive 自動交換為選用，在 Claude Code 中目前必定 fail closed（Google Drive 連接器 `update_file` 只能改 metadata，無法保留 file ID 覆寫內容），細節見 `CODEX-DRIVE-WORKFLOW.md` 的「Claude Code 執行時」。不得改名／移動占位檔或另建結果檔代替。
 - 讀取來源依 `CODEX-CONTENT-EVIDENCE.md` 的「Claude Code 執行時」：WebFetch／網路搜尋的摘要不能當正文 excerpt，圖片要先比對 SHA-256 再實際檢視。
 - 專案 skills 位於 `.agents/skills/`（Claude Code 不會自動載入此資料夾），依 AGENTS.md 指示直接讀取對應的 `SKILL.md`；與全域同名 skill 衝突時以專案版為準。
 - 開發驗證：`npm run test:all`（E2E 在 Windows 會自動找 Chrome／Edge）。

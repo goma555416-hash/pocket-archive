@@ -120,7 +120,14 @@ python -m http.server 5173
 1. 可先勾選要整理的卡片；未勾選時使用全部待整理項目。
 2. 已連結 Drive 時，按「送到 Drive AI-Inbox」，再按「一鍵複製 Codex 指令」貼到有 Drive 原檔下載／更新能力的 Codex。指令指定此批 export_id、必讀儲存庫規則與禁止 Notion；選對工作區不代表已授權 Drive。 Codex 依 [CODEX-DRIVE-WORKFLOW.md](./CODEX-DRIVE-WORKFLOW.md) 原檔覆寫結果占位檔。
 3. 未連結 Drive 時，展開「離線／手動檔案流程」下載 JSON/ZIP，搭配 [CODEX-ORGANIZE-PROMPT.md](./CODEX-ORGANIZE-PROMPT.md) 使用本機 Codex CLI 或 Claude Code。
-   - 使用 Claude Code 時：目前它的 Google Drive 連接器不能保留 file ID 覆寫檔案內容，第 2 步的 Drive 自動寫回會停止（fail closed）。經你同意後，結果改存成 `private-data/organized-<export_id>.json`，再用 App「匯入 organized JSON」套用，詳見 [CODEX-DRIVE-WORKFLOW.md](./CODEX-DRIVE-WORKFLOW.md) 的「Claude Code 執行時」。
+   - **使用 Claude Code（建議在 Windows 處理）**：
+     1. iPhone 照常收藏，會自動同步到 Windows。
+     2. 在 Windows 的 Pocket Archive 打開「Codex 整理」→「離線／手動檔案流程」→「下載待整理批次」。
+     3. 請 Claude 整理這個批次。Claude 逐筆讀取內容後分類，驗證通過才把結果存成 `private-data/organized-<export_id>.json`。
+     4. 回到 App 按「匯入 organized.json」選這個檔案，逐項預覽、勾選、套用（可單次復原）。
+     5. 收藏自動同步，iPhone 就能看到分類結果。
+
+     不必先「送到 Drive AI-Inbox」：Claude Code 的 Google Drive 連接器不能保留 file ID 覆寫內容，Drive 自動寫回會停止（fail closed）。詳見 [CODEX-DRIVE-WORKFLOW.md](./CODEX-DRIVE-WORKFLOW.md) 的「Claude Code 執行時」。
 4. 可先驗證：
 
    ```bash
