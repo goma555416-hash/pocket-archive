@@ -1,7 +1,14 @@
 #!/usr/bin/env node
 // Helper for the Claude cloud routine (see CLAUDE-ROUTINE.md). Talks to the
-// Pocket Archive Worker agent API. The token comes only from PA_AGENT_TOKEN
-// and is never printed or written to disk.
+// Pocket Archive Worker agent API.
+//
+// Credential: in the Claude cloud environment the agent token is a *network
+// secret* (Bearer, host = the backend). Anthropic's agent proxy adds the
+// Authorization header after the request leaves the VM, so the token is never
+// visible here and this script sends no Authorization header of its own.
+// PA_AGENT_TOKEN is only an optional fallback for local testing; it is never
+// printed or written to disk. PA_BACKEND_ORIGIN optionally overrides the
+// default backend.
 //
 //   node scripts/routine-agent.mjs job    <exportId> <attempt>
 //   node scripts/routine-agent.mjs inbox  <exportId> <attempt> <outPath>
@@ -13,14 +20,16 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
 const EXPORT_ID = /^export-[A-Za-z0-9._:-]{1,110}$/;
+export const DEFAULT_BACKEND_ORIGIN = 'https://pocket-archive.goma555416.workers.dev';
 
 function line(stream, text) { stream.write(`${text}\n`); }
 
+function backendOrigin(env) { return (env.PA_BACKEND_ORIGIN || DEFAULT_BACKEND_ORIGIN).replace(/\/+$/, ''); }
+
 async function api(fetchImpl, env, path, init = {}) {
-  const response = await fetchImpl(`${env.PA_BACKEND_ORIGIN.replace(/\/+$/, '')}${path}`, {
-    ...init, headers: { Authorization: `Bearer ${env.PA_AGENT_TOKEN}`, ...(init.headers || {}) }
-  });
-  return response;
+  const headers = { ...(init.headers || {}) };
+  if (env.PA_AGENT_TOKEN) headers.Authorization = `Bearer ${env.PA_AGENT_TOKEN}`;
+  return fetchImpl(`${backendOrigin(env)}${path}`, { ...init, headers });
 }
 
 async function errorText(response) {
@@ -31,10 +40,7 @@ async function errorText(response) {
 export async function runAgentCommand(argv, { env = process.env, fetchImpl = fetch, stdout = process.stdout, stderr = process.stderr } = {}) {
   const [command, exportId, attemptText, ...rest] = argv;
   try {
-    for (const name of ['PA_AGENT_TOKEN', 'PA_BACKEND_ORIGIN']) {
-      if (!env[name]) { line(stderr, `缺少環境變數 ${name}`); return 2; }
-    }
-    if (!/^https:\/\//.test(env.PA_BACKEND_ORIGIN)) { line(stderr, 'PA_BACKEND_ORIGIN 必須是 https:// 網址'); return 2; }
+    if (!/^https:\/\//.test(backendOrigin(env))) { line(stderr, 'PA_BACKEND_ORIGIN 必須是 https:// 網址'); return 2; }
     if (!['job', 'inbox', 'submit', 'fail'].includes(command)) { line(stderr, '用法：job|inbox|submit|fail <exportId> <attempt> ...'); return 2; }
     if (!EXPORT_ID.test(exportId || '')) { line(stderr, 'exportId 無效'); return 2; }
     const attempt = Number(attemptText);

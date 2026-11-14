@@ -61,10 +61,18 @@ test('fail command posts sanitized reason', async () => {
   assert.deepEqual(JSON.parse(calls[0].init.body), { code: 'auth_required', message: '來源需要登入' });
 });
 
-test('missing environment exits non-zero naming the variable without values', async () => {
+test('works with no environment: default backend, token left to the network secret proxy', async () => {
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => { calls.push({ url: String(url), init }); return Response.json({ ok: true, job: { exportId: 'export-x' } }); };
+  assert.equal(await runAgentCommand(['job', 'export-x', '1'], { env: {}, fetchImpl, stdout: sink(), stderr: sink() }), 0);
+  assert.equal(calls[0].url, 'https://pocket-archive.goma555416.workers.dev/api/ai/agent/jobs/export-x?attempt=1');
+  assert.equal(new Headers(calls[0].init.headers).has('Authorization'), false, 'must not send an Authorization header itself');
+});
+
+test('rejects a non-https backend override and invalid export ids', async () => {
   const err = sink();
-  assert.notEqual(await runAgentCommand(['job', 'export-x', '1'], { env: { PA_BACKEND_ORIGIN: 'https://backend.example' }, fetchImpl: async () => { throw new Error('should not fetch'); }, stdout: sink(), stderr: err }), 0);
-  assert.ok(err.lines.join('').includes('PA_AGENT_TOKEN'));
+  assert.notEqual(await runAgentCommand(['job', 'export-x', '1'], { env: { PA_BACKEND_ORIGIN: 'http://insecure.example' }, fetchImpl: async () => { throw new Error('should not fetch'); }, stdout: sink(), stderr: err }), 0);
+  assert.ok(err.lines.join('').includes('PA_BACKEND_ORIGIN'));
   const bad = sink();
   assert.notEqual(await runAgentCommand(['job', 'not-an-export', '1'], { env, fetchImpl: async () => { throw new Error('no'); }, stdout: sink(), stderr: bad }), 0);
 });

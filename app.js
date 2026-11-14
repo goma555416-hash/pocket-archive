@@ -843,7 +843,7 @@ async function createAgentCredential() {
   try {
     const result = await state.backend.createAiAgentCredential(name, 90);
     $('#agent-token').value = result.token; $('#agent-token-once').hidden = false;
-    await refreshAgentCredentials(); toast('已建立 Claude 代理憑證；請立即貼到 Claude 雲端環境的 PA_AGENT_TOKEN');
+    await refreshAgentCredentials(); toast('已建立 Claude 代理憑證；請立即貼到 claude.ai 雲端環境的 Network secrets');
   } catch (error) { toast(`建立 Claude 代理憑證失敗：${error.message}`, 8000); }
 }
 
