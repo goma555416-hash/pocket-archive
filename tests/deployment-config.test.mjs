@@ -38,7 +38,8 @@ test('production deployment includes the complete ordered D1 migration set', asy
     '0001_auth.sql',
     '0002_capture.sql',
     '0003_owner_session_security.sql',
-    '0004_capture_images.sql'
+    '0004_capture_images.sql',
+    '0005_ai_jobs.sql'
   ]);
   for (const migration of migrations) {
     const sql = await read(`worker/migrations/${migration}`);
