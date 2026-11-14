@@ -238,7 +238,7 @@ try {
   const organized = JSON.stringify({ format: 'pocket-archive-organized', schema_version: 2, source_export_id: exportId, items: [{ id: 'imported-e2e', analysis_status: 'completed', suggested_categories: ['閱讀'], suggested_tags: ['已分析'], summary: '依可見測試內容產生的摘要', reason: '已讀取匿名文章正文', confidence: 'high', evidence: { status: 'content_read', kind: 'article_body', source_url: 'https://example.net/imported', excerpt: visibleBody, observed_at: '2026-10-23T12:00:00.000Z' } }] });
   await cdp.evaluate(`(() => { const file=new File([${JSON.stringify(organized)}],'organized.json',{type:'application/json'}); const transfer=new DataTransfer(); transfer.items.add(file); const input=document.querySelector('#organized-file'); input.files=transfer.files; input.dispatchEvent(new Event('change',{bubbles:true})); })()`);
   await waitFor(() => cdp.evaluate("!document.querySelector('#apply-ai').hidden"), 'Codex 差異預覽');
-  assert.ok(await cdp.evaluate("document.querySelector('#ai-preview').textContent.includes('Codex 回報：已讀取文字內容')"), '預覽應顯示內容證據狀態');
+  assert.ok(await cdp.evaluate("document.querySelector('#ai-preview').textContent.includes('Claude 回報：已讀取文字內容')"), '預覽應顯示內容證據狀態');
   assert.equal(await cdp.evaluate("document.querySelector('[data-suggestion-id]').checked"), true, '有正文證據的分類可預設勾選');
   await cdp.evaluate("document.querySelector('#apply-ai').click()");
   await waitFor(() => cdp.evaluate("!document.querySelector('#ai-dialog').open"), 'Codex 套用完成');
@@ -251,7 +251,7 @@ try {
   await cdp.evaluate("document.querySelector('[data-view=inbox]').click()");
   await waitFor(() => cdp.evaluate("[...document.querySelectorAll('.card-title')].some(node=>node.textContent.includes('還原收藏'))"), '復原後回到收件匣');
   assert.equal(await cdp.evaluate("document.querySelectorAll('.ai-summary').length"), 0, '復原後原始收藏沒有 AI 摘要');
-  process.stdout.write('E2E：Codex 預覽、套用與復原通過\n');
+  process.stdout.write('E2E：AI 預覽、套用與復原通過\n');
 
   await cdp.evaluate(`(() => {
     document.querySelectorAll('dialog[open]').forEach(dialog=>dialog.close());
@@ -504,14 +504,81 @@ try {
     await caches.open('pocket-archive-v2.3.1-ai-handoff');
     await navigator.serviceWorker.register('./sw.js?upgrade-v232');
   })()`);
-  await waitFor(() => cdp.evaluate("caches.keys().then(keys=>!keys.includes('pocket-archive-v2.3.1-ai-handoff') && keys.includes('pocket-archive-v2.4.0-content-evidence'))"), '舊快取更新清除');
+  await waitFor(() => cdp.evaluate("caches.keys().then(keys=>!keys.includes('pocket-archive-v2.3.1-ai-handoff') && keys.includes('pocket-archive-v2.5.0-cloud-ai'))"), '舊快取更新清除');
   assert.ok(await cdp.evaluate("caches.match('./content-evidence.mjs').then(Boolean)"), '新分類模組已離線快取');
   await cdp.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
   await cdp.send('Page.reload');
   await waitFor(() => cdp.evaluate("Boolean(document.querySelector('#page-heading'))"), '離線啟動', 12000);
   await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
 
-  process.stdout.write('E2E 通過：遷移、單筆、批次、圖片、搜尋、備份、Codex 預覽/套用/復原、OAuth popup 手勢、Drive 原生 fetch、Toast、390px、離線。\n');
+
+  // Cloud AI UI against a mocked Pocket Archive backend (separate tab).
+  const aiTarget = await fetch(`${DEBUG}/json/new?about:blank`, { method: 'PUT' }).then(response => response.json());
+  const ai = new Cdp(aiTarget.webSocketDebuggerUrl); await ai.send('Page.enable'); await ai.send('Runtime.enable');
+  await ai.send('Page.addScriptToEvaluateOnNewDocument', { source: `
+    window.__aiMock = { configured: false, jobs: [], requests: [] };
+    const realFetch = window.fetch.bind(window);
+    const reply = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
+    window.fetch = async (input, init = {}) => {
+      const url = new URL(typeof input === 'string' ? input : input.url, location.href);
+      if (url.origin !== location.origin || !url.pathname.startsWith('/api/')) return realFetch(input, init);
+      const method = (init.method || 'GET').toUpperCase(); const path = url.pathname;
+      let body = null; try { body = typeof init.body === 'string' ? JSON.parse(init.body) : null; } catch {}
+      window.__aiMock.requests.push({ method, path, body });
+      if (path === '/api/owner/status') return reply({ ok: true, configured: true });
+      if (path === '/api/session') return reply({ ok: true, authenticated: true, user: { email: 'owner@example.com', displayName: 'Owner' }, session: { id: 's1' } });
+      if (path === '/api/sessions') return reply({ ok: true, sessions: [] });
+      if (path === '/api/capture/credentials') return reply({ ok: true, credentials: [] });
+      if (path === '/api/capture/jobs/claim') return reply({ ok: true, jobs: [] });
+      if (path === '/api/ai/agent-credentials') return reply({ ok: true, credentials: [] });
+      if (path === '/api/ai/jobs' && method === 'GET') return reply({ ok: true, configured: window.__aiMock.configured, jobs: window.__aiMock.jobs });
+      if (/^\\/api\\/ai\\/jobs\\/[^/]+\\/retry$/.test(path)) { window.__aiMock.jobs = window.__aiMock.jobs.map(job => ({ ...job, status: 'running', failureMessage: null })); return reply({ ok: true, job: window.__aiMock.jobs[0] }); }
+      if (path === '/api/drive/about') return reply({ user: { emailAddress: 'owner@example.com' } });
+      if (path === '/api/drive/list') {
+        const names = { 'Pocket Archive': 'root', 'Backups': 'backups', 'AI-Inbox': 'aiInbox', 'AI-Results': 'aiResults', 'Sync': 'sync', 'Attachments': 'syncAttachments' };
+        if (body?.name && names[body.name] && body.mimeType) return reply({ files: [{ id: 'folder-' + names[body.name], name: body.name, appProperties: { paRole: names[body.name] } }] });
+        return reply({ files: [] });
+      }
+      if (path === '/api/drive/files' && method === 'POST') return reply({ id: 'file-' + Math.random().toString(36).slice(2), name: body?.name, appProperties: body?.appProperties || {} });
+      if (path.startsWith('/api/drive/files/')) return reply({ id: path.split('/')[4], appProperties: {} });
+      return reply({ ok: false, error: { code: 'not_found', message: 'mock' } }, 404);
+    };
+  ` });
+  await ai.send('Page.navigate', { url: HOST });
+  await waitFor(() => ai.evaluate('window.__PA_READY__ === true'), 'AI 模擬後端 App 初始化');
+  await waitFor(() => ai.evaluate("window.__aiMock.requests.some(r => r.path === '/api/ai/jobs')"), '讀取雲端 AI 工作');
+  await ai.evaluate("document.querySelector('#ai-button').click()");
+  await waitFor(() => ai.evaluate("document.querySelector('#ai-dialog').open && !document.querySelector('#ai-cloud-export').disabled"), 'AI 視窗與送出按鈕');
+  // send does not enqueue when cloud not configured
+  await ai.evaluate("document.querySelector('#ai-cloud-export').click()");
+  await waitFor(() => ai.evaluate("document.querySelector('#ai-cloud-status').textContent.includes('雲端整理尚未設定')"), '未設定提示');
+  assert.equal(await ai.evaluate("window.__aiMock.requests.some(r => r.path === '/api/drive/files' && r.method === 'POST' && String(r.body?.name || '').startsWith('pocket-archive-inbox'))"), false, '未設定時不可建立 Drive 批次');
+  // running / ready / failed states
+  const setJobs = async (status, extra = {}) => {
+    await ai.evaluate(`window.__aiMock.configured = true; window.__aiMock.jobs = [${JSON.stringify({ exportId: 'export-ui-1', status, itemCount: 2, itemIds: ['a', 'b'], inboxFileId: 'inbox-1', resultFileId: 'result-1', attempt: 1, failureCode: null, failureMessage: null, createdAt: Date.now(), startedAt: Date.now(), ...extra })}]; document.querySelector('#ai-button').click();`);
+  };
+  await setJobs('running');
+  await waitFor(() => ai.evaluate("document.querySelector('#ai-cloud-status').textContent.includes('整理中…')"), '整理中狀態');
+  await setJobs('failed', { failureCode: 'routine_rate_limited', failureMessage: '觸發 Claude 雲端任務失敗（HTTP 429）' });
+  await waitFor(() => ai.evaluate("document.querySelector('#ai-cloud-status').textContent.includes('整理失敗') && !document.querySelector('#ai-retry').hidden"), '失敗與重試');
+  await ai.evaluate("document.querySelector('#ai-retry').click()");
+  await waitFor(() => ai.evaluate("window.__aiMock.requests.some(r => r.path === '/api/ai/jobs/export-ui-1/retry')"), '重試呼叫');
+  await setJobs('ready');
+  await waitFor(() => ai.evaluate("!document.querySelector('#ai-badge').hidden && document.querySelector('#ai-button').getAttribute('aria-label').includes('有結果')"), '有結果圓點');
+  assert.ok(await ai.evaluate("document.querySelector('#ai-cloud-status').textContent.includes('有結果可查看')"));
+  assert.equal(await ai.evaluate("document.body.innerText.includes('Codex')"), false, '畫面不應出現 Codex');
+  for (const width of [375, 390]) {
+    await ai.send('Emulation.setDeviceMetricsOverride', { width, height: 820, deviceScaleFactor: 2, mobile: true });
+    await delay(150);
+    assert.equal(await ai.evaluate("(() => { const d = document.querySelector('#ai-dialog'); return d.scrollWidth <= d.clientWidth + 1 && document.documentElement.scrollWidth <= window.innerWidth + 1; })()"), true, `${width}px AI 視窗不可水平溢出`);
+  }
+  await ai.send('Emulation.clearDeviceMetricsOverride');
+  await ai.evaluate("document.querySelector('#ai-dialog').close(); document.querySelector('#cloud-button').click(); document.querySelector('#agent-token').value='pa_agent_test.secret'; document.querySelector('#agent-token-once').hidden=false; document.querySelector('#cloud-dialog').close();");
+  assert.equal(await ai.evaluate("document.querySelector('#agent-token').value === '' && document.querySelector('#agent-token-once').hidden"), true, '關閉視窗後清除一次性代理憑證');
+  ai.close();
+  process.stdout.write('E2E：雲端 AI 整理狀態、重試、圓點與 375/390px 通過\n');
+
+  process.stdout.write('E2E 通過：遷移、單筆、批次、圖片、搜尋、備份、AI 預覽/套用/復原、雲端 AI 狀態、OAuth popup 手勢、Drive 原生 fetch、Toast、390px、離線。\n');
 } finally {
   cdp?.close();
   if (browser && browser.exitCode === null) {

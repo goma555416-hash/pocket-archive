@@ -1,4 +1,5 @@
 import { imageCaptureService } from './capture-images.mjs';
+import { aiJobService } from './ai-jobs.mjs';
 import { fetchSocialMediaMetadata } from '../../social-metadata.mjs';
 import {
   CSRF_COOKIE, OAUTH_COOKIE, OWNER_SETUP_COOKIE, SESSION_COOKIE, appendCookie, assertSameOrigin, clearCookie, cookie,
@@ -408,6 +409,57 @@ function captureImages(env) {
   return imageCaptureService({ env, now: () => nowMs(env), driveFetch: (session, target, options) => googleDriveFetch(null, boundedEnv, session, target, options) });
 }
 
+function aiJobs(env) {
+  const boundedEnv = { ...env, __fetch: (input, options = {}) => fetcher(env)(input, { ...options, signal: options.signal || AbortSignal.timeout(20_000) }) };
+  return aiJobService({ env, now: () => nowMs(env), fetchImpl: boundedEnv.__fetch, httpError, driveFetch: (session, target, options) => googleDriveFetch(null, boundedEnv, session, target, options) });
+}
+
+const AI_AGENT_JOB_PATH = /^\/api\/ai\/agent\/jobs\/(export-[A-Za-z0-9._:-]{1,110})(\/inbox|\/result|\/fail)?$/;
+
+async function aiRoute(request, env, path) {
+  const service = aiJobs(env); const method = request.method;
+  if (path === '/api/ai/agent-credentials' && method === 'POST') {
+    return authenticatedResponse(request, env, { csrf: true }, async session => json({ ok: true, ...(await service.createCredential(session.user_id, await readJson(request))), warning: '此憑證只顯示一次；請貼到 Claude 雲端環境的 PA_AGENT_TOKEN，外洩時立即撤銷。' }, 201));
+  }
+  if (path === '/api/ai/agent-credentials' && method === 'GET') {
+    return authenticatedResponse(request, env, {}, async session => json({ ok: true, credentials: await service.listCredentials(session.user_id) }));
+  }
+  let match = /^\/api\/ai\/agent-credentials\/([A-Za-z0-9_-]{8,64})$/.exec(path);
+  if (match && method === 'DELETE') {
+    const id = match[1];
+    return authenticatedResponse(request, env, { csrf: true }, async session => {
+      if (!await service.revokeCredential(session.user_id, id)) throw httpError(404, 'credential_not_found', '找不到可撤銷的 AI 代理憑證');
+      return json({ ok: true, revoked: id });
+    });
+  }
+  if (path === '/api/ai/jobs' && method === 'GET') {
+    return authenticatedResponse(request, env, {}, async session => json({ ok: true, configured: service.configured(), jobs: await service.listJobs(session.user_id) }, 200, { 'Cache-Control': 'no-store' }));
+  }
+  if (path === '/api/ai/jobs' && method === 'POST') {
+    return authenticatedResponse(request, env, { csrf: true }, async session => {
+      const result = await service.createJob(session, await readJson(request, 32 * 1024));
+      return json({ ok: true, ...result }, result.duplicate ? 200 : 201);
+    });
+  }
+  match = /^\/api\/ai\/jobs\/(export-[A-Za-z0-9._:-]{1,110})\/(retry|applied)$/.exec(path);
+  if (match && method === 'POST') {
+    const [, exportId, action] = match;
+    return authenticatedResponse(request, env, { csrf: true }, async session => json({ ok: true, job: action === 'retry' ? await service.retryJob(session, exportId) : await service.markApplied(session.user_id, exportId) }));
+  }
+  match = AI_AGENT_JOB_PATH.exec(path);
+  if (match) {
+    const credential = await service.authenticateAgent(request);
+    const attempt = Number(new URL(request.url).searchParams.get('attempt'));
+    const exportId = match[1]; const action = match[2] || '';
+    if (!action && method === 'GET') return json({ ok: true, job: await service.agentGetJob(credential, exportId, attempt) }, 200, { 'Cache-Control': 'no-store' });
+    if (action === '/inbox' && method === 'GET') return service.agentInbox(credential, exportId, attempt);
+    if (action === '/result' && method === 'PUT') return json({ ok: true, ...(await service.agentSubmitResult(credential, exportId, attempt, request)) });
+    if (action === '/fail' && method === 'POST') return json({ ok: true, job: await service.agentFail(credential, exportId, attempt, await readJson(request, 4096)) });
+    throw httpError(405, 'method_not_allowed', '不支援的 AI 代理方法');
+  }
+  throw httpError(404, 'not_found', '找不到 AI API');
+}
+
 async function submitImageCapture(request, env) {
   requireConfiguration(env);
   const credential = await authenticateCapture(request, env);
@@ -583,6 +635,7 @@ export async function fetchHandler(request, env, ctx = {}) {
     else if (path === '/api/capture/jobs/claim' && request.method === 'POST') response = await claimCaptureJobs(request, env);
     else if (/^\/api\/capture\/jobs\/capture_[A-Za-z0-9_-]{8,100}\/ack$/.test(path) && request.method === 'POST') response = await acknowledgeCaptureJob(request, env, path.split('/').at(-2));
     else if (path.startsWith('/api/drive/')) response = await driveRoute(request, env, path);
+    else if (path.startsWith('/api/ai/')) response = await aiRoute(request, env, path);
     else if (path.startsWith('/api/')) response = json({ ok: false, error: { code: 'not_found', message: '找不到 API' } }, 404);
     else if (env.ASSETS) response = await env.ASSETS.fetch(request);
     else response = new Response('Not found', { status: 404 });
@@ -594,7 +647,9 @@ export async function fetchHandler(request, env, ctx = {}) {
 }
 
 export async function scheduledHandler(_event, env, ctx) {
-  const work = captureImages(env).cleanup();
+  // The AI sweep must never block or fail the existing image cleanup.
+  const aiSweep = aiJobs(env).sweep().catch(error => console.error('ai_jobs_sweep_failed', error?.message || error));
+  const work = Promise.all([captureImages(env).cleanup(), aiSweep]);
   if (ctx?.waitUntil) ctx.waitUntil(work); else await work;
 }
 export default { fetch: fetchHandler, scheduled: scheduledHandler };

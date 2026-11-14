@@ -28,7 +28,7 @@
         <button class="nav-button" data-view="archived" type="button"><span>▤</span> 已封存 <b id="nav-count-archived">0</b></button>
         <button class="nav-button" data-view="all" type="button"><span>▦</span> 全部收藏 <b id="nav-count-all">0</b></button>
       </nav>
-      <div class="side-bottom"><p>收藏值得留下的，<br />其他的慢慢整理。</p><span class="version">LOCAL FIRST · V2.4.0</span></div>
+      <div class="side-bottom"><p>收藏值得留下的，<br />其他的慢慢整理。</p><span class="version">LOCAL FIRST · V2.5.0</span></div>
     </aside>
 
     <div class="workspace">
@@ -36,7 +36,7 @@
         <div class="mobile-brand"><span class="brand-mark" aria-hidden="true"><img class="brand-symbol" src="./icons/icon.svg" alt="" /></span><strong>Pocket Archive</strong></div>
         <span class="topbar-kicker">LOCAL-FIRST / PRIVATE BY DEFAULT</span>
         <div class="topbar-actions">
-          <button class="button ghost small" id="ai-button" type="button">Codex 整理</button>
+          <button class="button ghost small ai-button" id="ai-button" type="button" aria-label="AI 整理">AI 整理<span id="ai-badge" class="ai-badge" hidden aria-hidden="true"></span></button>
           <button class="button ghost small" id="backup-button" type="button">備份／還原</button>
           <button class="button ghost small" id="cloud-button" type="button">Drive 同步</button>
         </div>
@@ -111,7 +111,7 @@
       <label>標籤 <small id="entry-tags-help">逗號分隔；最多 24 個，每個 32 字</small><textarea id="entry-tags" name="tags" autocomplete="off" aria-describedby="entry-tags-help entry-error" rows="2"></textarea></label>
       <details id="entry-legacy" hidden><summary>舊分類相容資訊</summary><p id="entry-legacy-info" class="privacy-note"></p><label>原有分類（保留）<input type="text" id="entry-category" readonly /></label></details>
       <p id="entry-error" class="error-note" role="alert" tabindex="-1" hidden></p>
-      <label>備註 <small>原始備註不會被 Codex 建議覆寫</small><textarea id="entry-note" rows="3" maxlength="5000"></textarea></label>
+      <label>備註 <small>原始備註不會被 AI 建議覆寫</small><textarea id="entry-note" rows="3" maxlength="5000"></textarea></label>
       <label class="check-label"><input id="entry-starred" type="checkbox" /> 加上星號</label>
       <div class="modal-footer"><button type="button" data-close="entry-dialog" class="button ghost">取消</button><button class="button primary" type="submit" id="save-button">儲存收藏 →</button></div>
     </form>
@@ -135,7 +135,7 @@
 
   <dialog id="backup-dialog" aria-labelledby="backup-heading">
     <div class="entry-form"><div class="modal-heading"><div><div class="eyebrow subtle">PORTABLE & OFFLINE</div><h2 id="backup-heading">備份與還原</h2></div><button type="button" data-close="backup-dialog" class="icon-button" aria-label="關閉">✕</button></div>
-      <p>無圖片時下載 JSON；含附件時下載完整 ZIP。匯入會先驗證並顯示合併、略過與衝突數量。</p><div class="action-stack"><button id="export-backup" class="button primary" type="button">下載完整備份</button><button id="export-migration" class="button outline" type="button">下載跨網址遷移 ZIP</button><button id="import-backup" class="button outline" type="button">選擇 JSON／ZIP 還原或遷移</button><button id="persist-storage" class="button ghost" type="button">請求瀏覽器保留本機資料</button><button id="undo-ai" class="button ghost" type="button">復原上次 Codex 套用</button></div><p id="backup-status" class="privacy-note"></p><p id="migration-status" class="privacy-note">遷移 ZIP 會額外保存 tombstone、因果時鐘與 AI 工作索引，但不含任何 Google／Session／捷徑憑證。</p>
+      <p>無圖片時下載 JSON；含附件時下載完整 ZIP。匯入會先驗證並顯示合併、略過與衝突數量。</p><div class="action-stack"><button id="export-backup" class="button primary" type="button">下載完整備份</button><button id="export-migration" class="button outline" type="button">下載跨網址遷移 ZIP</button><button id="import-backup" class="button outline" type="button">選擇 JSON／ZIP 還原或遷移</button><button id="persist-storage" class="button ghost" type="button">請求瀏覽器保留本機資料</button><button id="undo-ai" class="button ghost" type="button">復原上次 AI 套用</button></div><p id="backup-status" class="privacy-note"></p><p id="migration-status" class="privacy-note">遷移 ZIP 會額外保存 tombstone、因果時鐘與 AI 工作索引，但不含任何 Google／Session／捷徑憑證。</p>
     </div>
   </dialog>
 
@@ -163,6 +163,15 @@
       <section class="cloud-section" aria-labelledby="backup-history-heading"><h3 id="backup-history-heading">歷史備份</h3><div id="cloud-backup-list"><p class="privacy-note">連結後顯示由 Pocket Archive 建立的備份。</p></div></section>
       <section class="cloud-section" aria-labelledby="sync-conflict-heading"><h3 id="sync-conflict-heading">同步衝突</h3><div id="sync-conflicts"><p class="privacy-note">目前沒有待處理的同步衝突。</p></div></section>
       <section id="device-sessions-section" class="cloud-section" aria-labelledby="device-sessions-heading" hidden><h3 id="device-sessions-heading">已登入裝置</h3><button id="refresh-device-sessions" type="button" class="button ghost small">更新裝置清單</button><div id="device-sessions"><p class="privacy-note">正在取得工作階段…</p></div></section>
+      <section id="cloud-ai-section" class="cloud-section" aria-labelledby="cloud-ai-heading" hidden>
+        <h3 id="cloud-ai-heading">雲端 AI 整理</h3>
+        <p id="cloud-ai-configured" class="privacy-note">正在確認雲端整理設定…</p>
+        <p class="privacy-note">Claude 雲端任務用這個憑證向 Pocket Archive 後端領取批次、交回結果；它只能處理「整理中」的批次，不能讀取其他收藏或 Google 授權。設定步驟見 CLOUD-AI-SETUP.md。</p>
+        <label>憑證名稱<input id="agent-credential-name" type="text" maxlength="80" value="Claude 雲端整理" autocomplete="off" /></label>
+        <button id="create-agent-credential" type="button" class="button outline">建立 Claude 代理憑證</button>
+        <div id="agent-token-once" class="preview-panel" hidden><strong>只顯示這一次</strong><p>請貼到 Claude 雲端環境的 network secret <code>PA_AGENT_TOKEN</code>，不要存在其他地方。</p><textarea id="agent-token" rows="3" readonly aria-label="Claude 代理憑證"></textarea><button id="copy-agent-token" type="button" class="button ghost small">複製憑證</button></div>
+        <div id="agent-credentials"><p class="privacy-note">尚未建立 Claude 代理憑證。</p></div>
+      </section>
       <section id="shortcut-section" class="cloud-section" aria-labelledby="shortcut-heading" hidden>
         <h3 id="shortcut-heading">iPhone 一鍵收藏</h3><p class="privacy-note">圖片分享：每張最多 4 MiB、逐張送出；每日 50 MiB／100 次、未清理暫存共 100 MiB，30 次／分鐘。App 直接選圖仍為 25 MB。安全收件後需開啟 App 入庫與同步。原檔保留 Exif／GPS，分享前請自行確認隱私。</p>
         <p class="privacy-note">建立只能新增收件工作的有限憑證；它不能讀取收藏、刪除資料或呼叫 Google Drive。它獨立於 Google 授權，「撤銷 Google 授權」不會暗中停用捷徑；遺失 iPhone 時請在此單獨撤銷。</p>
@@ -181,14 +190,13 @@
   </dialog>
 
   <dialog id="ai-dialog" aria-labelledby="ai-heading" class="wide-dialog">
-    <div class="entry-form"><div class="modal-heading"><div><div class="eyebrow subtle">CODEX ON DEMAND</div><h2 id="ai-heading">Codex 批次整理</h2></div><button type="button" data-close="ai-dialog" class="icon-button" aria-label="關閉">✕</button></div>
-      <ol class="workflow"><li>選取項目；未選時使用全部待整理收藏。</li><li>已連結 Drive 時送到 AI-Inbox，再一鍵複製此批次專用指令到 Codex。</li><li>Codex 逐筆嘗試讀取正文、貼文或原始圖片，回報可驗證的來源與內容摘錄；只有標題時不產生猜測分類。</li><li>App 取得結果後先驗證與預覽；原始網址、備註及附件永不覆寫。</li></ol>
-      <div class="action-stack horizontal"><button id="ai-cloud-export" data-requires-cloud type="button" class="button primary" disabled>送到 Drive AI-Inbox</button><button id="ai-cloud-check" data-requires-cloud type="button" class="button outline" disabled>檢查 Drive 整理結果</button></div>
-      <p id="ai-cloud-status" class="privacy-note" aria-live="polite">未連結 Drive 時仍可使用下方檔案流程。</p>
-      <div id="codex-launch" hidden><label>此批次 Codex 啟動指令<textarea id="codex-launch-command" rows="8" readonly></textarea></label><button id="copy-codex-launch" type="button" class="button outline">一鍵複製 Codex 指令</button></div>
-      <p class="privacy-note">選對 Codex 工作區不代表已讀取專案規則或已授權 Drive。必須可下載原始 JSON/ZIP、更新占位原檔內容並回讀；能力不足時停止，禁止改搜 Notion。結果仍先預覽、人工勾選套用。</p>
-      <details><summary>離線／手動檔案流程</summary><div class="action-stack horizontal details-actions"><button id="export-ai" type="button" class="button ghost">下載待整理批次</button><button id="import-ai" type="button" class="button ghost">匯入 organized.json</button></div></details>
-      <div id="ai-preview" class="preview-panel" aria-live="polite"></div><div class="modal-footer"><button id="apply-ai" type="button" class="button primary" hidden>套用勾選建議</button></div>
+    <div class="entry-form"><div class="modal-heading"><div><div class="eyebrow subtle">AI ON DEMAND</div><h2 id="ai-heading">AI 整理</h2></div><button type="button" data-close="ai-dialog" class="icon-button" aria-label="關閉">✕</button></div>
+      <p id="ai-selection-note" class="privacy-note">選取卡片後送出；未選取時送出全部待整理收藏。Claude 會在雲端逐筆讀取內容後提出標籤建議，你看過勾選後才會套用。</p>
+      <div class="action-stack horizontal"><button id="ai-cloud-export" type="button" class="button primary" disabled>送出整理</button><button id="ai-retry" type="button" class="button outline" hidden>重試</button></div>
+      <p id="ai-cloud-status" class="ai-status" role="status" aria-live="polite"></p>
+      <div id="ai-preview" class="preview-panel" aria-live="polite"></div>
+      <div class="modal-footer"><button id="apply-ai" type="button" class="button primary" hidden>套用勾選建議</button></div>
+      <details class="ai-fallback"><summary>備用：手動檔案流程</summary><p class="privacy-note">雲端整理無法使用時，可下載批次交給 Windows 上的 Claude 整理，再匯入結果。</p><div class="action-stack horizontal details-actions"><button id="export-ai" type="button" class="button ghost">下載待整理批次</button><button id="import-ai" type="button" class="button ghost">匯入 organized.json</button></div></details>
     </div>
   </dialog>
 
@@ -199,7 +207,7 @@
   <dialog id="confirm-dialog" aria-labelledby="confirm-heading" class="wide-dialog"><div class="entry-form"><div class="modal-heading"><h2 id="confirm-heading">匯入預覽</h2><button type="button" data-close="confirm-dialog" class="icon-button" aria-label="關閉">✕</button></div><div id="confirm-content" class="preview-panel"></div><div class="modal-footer"><button type="button" data-close="confirm-dialog" class="button ghost">取消</button><button id="confirm-import" type="button" class="button primary">確認匯入</button></div></div></dialog>
 
   <input type="file" id="backup-file" accept=".json,.zip,application/json,application/zip" aria-label="選擇 Pocket Archive 備份檔" hidden />
-  <input type="file" id="organized-file" accept=".json,application/json" aria-label="選擇 Codex organized JSON" hidden />
+  <input type="file" id="organized-file" accept=".json,application/json" aria-label="選擇 AI 整理結果 organized.json" hidden />
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true" popover="manual"></div>
   <script type="module" src="./app.js"></script>
 </body>

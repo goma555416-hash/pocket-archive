@@ -4,7 +4,14 @@ Pocket Archive 是給 iPhone／iOS Safari、主畫面 Web App 與 Windows 瀏覽
 
 視覺維持既定 Minimal & Modern、Butter Yellow `#FFF2C9` × Periwinkle `#CBD7EF` 與 A3 實心書籤 Icon。
 
-## v2.4.0 Codex 實際內容證據與分類（PR 審核中，尚未部署）
+## v2.5.0 雲端自動 AI 整理（PR 審核中，尚未部署）
+
+- 任一端按「AI 整理」→「送出整理」，後端（Cloudflare Worker）觸發 Claude 雲端排程任務；Claude 經專用代理憑證領取批次、交回結果，後端驗證後寫回 Drive 占位檔並讀回比對。
+- 兩端顯示整理狀態（排隊中／整理中／有結果／失敗＋重試）；結果仍須逐項預覽、勾選才套用。
+- 觸發內容只帶批次編號；後端資料庫不保存收藏網址、備註或附件 hash。使用 Claude 訂閱額度，不接另外付費的 AI API。
+- 需要一次性設定：[CLOUD-AI-SETUP.md](./CLOUD-AI-SETUP.md)。實機驗收：[UAT-CLOUD-AI-V2.5.0.md](./UAT-CLOUD-AI-V2.5.0.md)。
+
+## v2.4.0 Codex 實際內容證據與分類
 
 - Codex 批次新增可執行的 **公開文章正文讀取工具**（在使用者明確交付批次後於 Codex Node 環境執行，具嚴格 HTTPS/實際連線 IP/無轉址/大小/逾時防護，資料只寫私人工作目錄）。
 - `organized.json` schema v2 向下相容擴充每筆 `evidence`：真正文摘錄／真圖片附件 hash／只有 metadata 或讀取受阻的原因。沒有可讀內容時不能標記完成分類；未提供 evidence 的舊檔案可匯入但預設不勾選。
@@ -115,19 +122,20 @@ python -m http.server 5173
 
 完整技術與威脅邊界見 [DRIVE-ARCHITECTURE.md](./DRIVE-ARCHITECTURE.md)。
 
-### Codex 批次整理
+### AI 整理（v2.5.0 雲端自動整理）
 
 1. 可先勾選要整理的卡片；未勾選時使用全部待整理項目。
-2. 已連結 Drive 時，按「送到 Drive AI-Inbox」，再按「一鍵複製 Codex 指令」貼到有 Drive 原檔下載／更新能力的 Codex。指令指定此批 export_id、必讀儲存庫規則與禁止 Notion；選對工作區不代表已授權 Drive。 Codex 依 [CODEX-DRIVE-WORKFLOW.md](./CODEX-DRIVE-WORKFLOW.md) 原檔覆寫結果占位檔。
-3. 未連結 Drive 時，展開「離線／手動檔案流程」下載 JSON/ZIP，搭配 [CODEX-ORGANIZE-PROMPT.md](./CODEX-ORGANIZE-PROMPT.md) 使用本機 Codex CLI 或 Claude Code。
-   - **使用 Claude Code（建議在 Windows 處理）**：
+2. 任一端（iPhone 或 Windows）按「AI 整理」→「送出整理」。Claude 雲端排程任務會自動接手，逐筆讀取內容後分類，結果寫回 Drive；兩端都會顯示「整理中…」，完成後「AI 整理」按鈕出現圓點。
+3. 打開「AI 整理」逐項預覽、勾選、套用（可單次復原），收藏自動同步到另一端。失敗時會顯示原因與「重試」。
+   - 一次性設定見 [CLOUD-AI-SETUP.md](./CLOUD-AI-SETUP.md)；雲端任務的指令見 [CLAUDE-ROUTINE.md](./CLAUDE-ROUTINE.md)；實機驗收見 [UAT-CLOUD-AI-V2.5.0.md](./UAT-CLOUD-AI-V2.5.0.md)。
+   - **備用：手動檔案流程**（雲端整理未設定或暫時無法使用時，建議在 Windows 處理）：
      1. iPhone 照常收藏，會自動同步到 Windows。
-     2. 在 Windows 的 Pocket Archive 打開「Codex 整理」→「離線／手動檔案流程」→「下載待整理批次」。
+     2. 在 Windows 的 Pocket Archive 打開「AI 整理」→「備用：手動檔案流程」→「下載待整理批次」。
      3. 請 Claude 整理這個批次。Claude 逐筆讀取內容後分類，驗證通過才把結果存成 `private-data/organized-<export_id>.json`。
      4. 回到 App 按「匯入 organized.json」選這個檔案，逐項預覽、勾選、套用（可單次復原）。
      5. 收藏自動同步，iPhone 就能看到分類結果。
 
-     不必先「送到 Drive AI-Inbox」：Claude Code 的 Google Drive 連接器不能保留 file ID 覆寫內容，Drive 自動寫回會停止（fail closed）。詳見 [CODEX-DRIVE-WORKFLOW.md](./CODEX-DRIVE-WORKFLOW.md) 的「Claude Code 執行時」。
+     本機 Claude Code 的 Google Drive 連接器不能保留 file ID 覆寫內容，所以手動流程不經過 Drive 寫回。
 4. 可先驗證：
 
    ```bash

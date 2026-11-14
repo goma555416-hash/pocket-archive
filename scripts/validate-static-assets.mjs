@@ -38,6 +38,8 @@ const publicAssets = [
   'content-evidence.mjs',
   'image-viewer.mjs',
   'ai-launch.mjs',
+  'ai-jobs-client.mjs',
+  'organized-shape.mjs',
   'capture-client.mjs',
   'social-metadata.mjs',
   'sw.js',

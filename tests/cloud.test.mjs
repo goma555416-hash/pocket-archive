@@ -129,7 +129,6 @@ test('AI 交換區預先建立結果檔並避免重複工作', async () => {
 });
 
 test('AI App preflight verifies full appProperties, unique file IDs, hashes and scope', async () => {
-  const { codexLaunchCommand } = await import('../ai-launch.mjs');
   const entry = createEntry({ id: 'test-entry', url: 'https://example.org/anonymous' });
   const files = new Map(); let sequence = 0;
   const drive = {
@@ -152,12 +151,6 @@ test('AI App preflight verifies full appProperties, unique file IDs, hashes and 
   assert.equal(proof.inboxFileId, request.inboxFileId);
   assert.equal(proof.resultFileId, request.resultFileId);
   assert.match(proof.inboxSha256, /^[a-f0-9]{64}$/);
-  const command = codexLaunchCommand(job.exportId, proof);
-  assert.ok(command.includes(proof.inboxSha256));
-  assert.ok(command.includes(proof.resultFileId));
-  assert.ok(command.includes('appProperties'));
-  assert.equal(command.includes('https://') || command.includes('http://'), false);
-  assert.throws(() => codexLaunchCommand(job.exportId, { ...proof, resultFileId: 'unsafe\\nheader' }), /證據格式無效/);
 
   const inbox = files.get(request.inboxFileId), result = files.get(request.resultFileId);
   delete inbox.appProperties.resultFileId;
@@ -205,14 +198,6 @@ test('模擬 iPhone/Windows 經 Drive journal 與附件做雙向增量同步', a
   const receivedA = await service.sync({ entries: localA.entries, repository: repoA, deviceId: 'iphone', journal: localA.journal, tombstones: {} });
   assert.equal(receivedA.entries[0].title, 'Windows 已編輯'); assert.equal(receivedA.conflicts.length, 0);
   assert.equal([...files.values()].filter(file => file.appProperties?.paRole === 'syncAttachment').length, 1, '附件依 SHA-256 去重');
-});
-
-test('AI 啟動指令指定批次與儲存庫、禁止 Notion，拒絕錯誤入口資料', async () => {
-  const { codexLaunchCommand } = await import('../ai-launch.mjs');
-  const command = codexLaunchCommand('export-anonymous-test');
-  for (const text of ['goma555416-hash/pocket-archive', 'AGENTS.md', 'AI-BATCH-SPEC.md', 'CODEX-DRIVE-WORKFLOW.md', 'CODEX-ORGANIZE-PROMPT.md', 'Pocket Archive/AI-Inbox', 'Pocket Archive/AI-Results', '禁止搜尋 Notion', 'fail closed', '原 file ID', 'export-anonymous-test']) assert.ok(command.includes(text), text);
-  assert.doesNotMatch(command, /https?:|Bearer|pa_capture_/);
-  assert.throws(() => codexLaunchCommand('https://private.example.test/?token=secret'), /無效/);
 });
 
 test('AI 結果原檔與完整 ID 驗證 fail closed，重複批次不能另建占位檔', async () => {

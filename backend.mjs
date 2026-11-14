@@ -60,6 +60,13 @@ export class PocketBackendClient {
   createCaptureCredential(name, expiresInDays = 180) { return this.request('/api/capture/credentials', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, expiresInDays }) }); }
   listCaptureCredentials() { return this.request('/api/capture/credentials'); }
   revokeCaptureCredential(id) { return this.request(`/api/capture/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
+  listAiJobs() { return this.request('/api/ai/jobs'); }
+  createAiJob(payload) { return this.request('/api/ai/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); }
+  retryAiJob(exportId) { return this.request(`/api/ai/jobs/${encodeURIComponent(exportId)}/retry`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); }
+  markAiJobApplied(exportId) { return this.request(`/api/ai/jobs/${encodeURIComponent(exportId)}/applied`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); }
+  createAiAgentCredential(name, expiresInDays = 180) { return this.request('/api/ai/agent-credentials', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, expiresInDays }) }); }
+  listAiAgentCredentials() { return this.request('/api/ai/agent-credentials'); }
+  revokeAiAgentCredential(id) { return this.request(`/api/ai/agent-credentials/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
   claimCaptureJobs(limit = 20) { return this.request(`/api/capture/jobs/claim?limit=${encodeURIComponent(limit)}`, { method: 'POST' }); }
   async downloadCaptureImage(id, leaseVersion) { const response = await this.request(`/api/capture/jobs/${encodeURIComponent(id)}/content`, { raw: true, headers: { 'X-PA-Lease-Version': String(leaseVersion) } }); return response.blob(); }
   acknowledgeCaptureJob(id, result = 'saved', leaseVersion) { return this.request(`/api/capture/jobs/${encodeURIComponent(id)}/ack`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'completed', result, leaseVersion }) }); }

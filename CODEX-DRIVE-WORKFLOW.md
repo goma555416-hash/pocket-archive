@@ -1,5 +1,7 @@
 # Codex：整理 Pocket Archive 最新的待整理收藏
 
+> **舊版（Codex），已由雲端整理取代（v2.5.0）。** 現在由使用者在 App 按「送出整理」，Claude 雲端排程任務經 Worker 代理 API 取批次、交結果，Worker 驗證後寫回占位檔。請改看 [CLAUDE-ROUTINE.md](./CLAUDE-ROUTINE.md) 與 [CLOUD-AI-SETUP.md](./CLOUD-AI-SETUP.md)。本文件保留作為舊流程與驗證規則的參考。
+
 當使用者說「整理 Pocket Archive 最新的待整理收藏」時，且已授權 Google Drive 連接器，依下列流程執行。先讀取 goma555416-hash/pocket-archive 的 AGENTS.md、AI-BATCH-SPEC.md、CODEX-ORGANIZE-PROMPT.md 與本文件。禁止搜尋 Notion 或其他私人工作區。工作區已選對不代表已讀規則或已授權 Drive；能力不足必須 fail closed。
 
 1. 找到使用者 Drive 中由 Pocket Archive 建立的 `Pocket Archive` 資料夾，列出 `AI-Inbox` 與 `AI-Results`。若找不到、連接器未授權，或只有搜尋權沒有 raw download/update 能力，明確停止並回報缺少的能力。
