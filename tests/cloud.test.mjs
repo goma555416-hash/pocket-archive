@@ -245,3 +245,25 @@ test('AI 檢查保持畫面所選批次，不因重複送出跳到另一個待�
   assert.throws(() => cloudAiJobForReview(jobs, 'export-missing'), /不改選/);
   assert.equal(cloudAiJobForReview(jobs).exportId, 'export-new');
 });
+
+test('markCloudJobApplied closes pending or ready job for the imported export only', async () => {
+  const { markCloudJobApplied } = await import('../ai-launch.mjs');
+  const jobs = [
+    { exportId: 'export-a', status: 'pending' },
+    { exportId: 'export-b', status: 'ready' },
+    { exportId: 'export-c', status: 'applied' }
+  ];
+  let out = markCloudJobApplied(jobs, 'export-a');
+  assert.equal(out.changed, true);
+  assert.deepEqual(out.jobs.map(job => job.status), ['applied', 'ready', 'applied']);
+  assert.equal(out.jobs[1], jobs[1]);
+  assert.equal(jobs[0].status, 'pending'); // input not mutated
+  out = markCloudJobApplied(jobs, 'export-b');
+  assert.deepEqual(out.jobs.map(job => job.status), ['pending', 'applied', 'applied']);
+  assert.equal(markCloudJobApplied(jobs, 'export-c').changed, false); // already applied is unchanged
+  out = markCloudJobApplied(jobs, 'export-zzz'); // pure offline export: no matching job
+  assert.equal(out.changed, false);
+  assert.deepEqual(out.jobs.map(job => job.status), ['pending', 'ready', 'applied']);
+  assert.equal(markCloudJobApplied(jobs, '').changed, false); // empty export id changes nothing
+  assert.equal(markCloudJobApplied(jobs, undefined).changed, false);
+});

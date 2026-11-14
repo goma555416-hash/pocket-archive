@@ -1,7 +1,7 @@
 import { receiveCaptureJob, imageDimensions } from './capture-client.mjs';
 import { identifySocialMediaUrl, identifySocialPlatform } from './social-metadata.mjs';
 import { classifyContent, WEBPAGE_KINDS, inputTags, mergeTopicTags, compatibilityPending } from './content-model.mjs';
-import { codexLaunchCommand, cloudAiJobForReview } from './ai-launch.mjs';
+import { codexLaunchCommand, cloudAiJobForReview, markCloudJobApplied } from './ai-launch.mjs';
 import { contentEvidenceLabel } from './content-evidence.mjs';
 import { createImageViewer } from './image-viewer.mjs';
 import {
@@ -530,8 +530,8 @@ async function applyOrganized() {
   try {
     await state.repository.setMeta('ai-undo-snapshot', { entries: result.snapshot, at: new Date().toISOString() });
     if (!await persistEntries(result.entries)) return;
-    const readyJob = state.cloudJobs.find(job => job.exportId === state.pendingSuggestions.sourceExportId && job.status === 'ready');
-    if (readyJob) { readyJob.status = 'applied'; await state.repository.setMeta('cloud-ai-jobs', state.cloudJobs); }
+    const closed = markCloudJobApplied(state.cloudJobs, state.pendingSuggestions.sourceExportId);
+    if (closed.changed) { state.cloudJobs = closed.jobs; await state.repository.setMeta('cloud-ai-jobs', state.cloudJobs); }
     state.pendingSuggestions = null; render(); $('#ai-preview').innerHTML = ''; $('#apply-ai').hidden = true; closeDialog('ai-dialog'); toast(`已套用 ${result.applied} 筆；可從備份視窗單次復原 ✓`);
   } catch (error) { toast(error.message, 7000); }
 }
