@@ -290,3 +290,52 @@ test('agent cannot touch other users or non-running jobs', { skip }, async () =>
   assert.equal(notRunning.status, 409);
   assert.equal((await notRunning.json()).error.code, 'invalid_state');
 });
+
+test('write-back mismatch stays recoverable by retry and resubmit', { skip }, async () => {
+  const fx = await aiFixture();
+  const { token } = await runningJob(fx);
+  fx.setReadBack('{"tampered":true}');
+  await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
+  assert.equal(fx.row('export-agent').failure_code, 'writeback_mismatch');
+  fx.setReadBack(null);
+  const retried = await (await fx.session('/api/ai/jobs/export-agent/retry', 'POST', {})).json();
+  assert.equal(retried.job.status, 'running');
+  assert.equal(retried.job.attempt, 2);
+  const resubmit = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=2', 'PUT', organized('export-agent'));
+  assert.equal(resubmit.status, 200);
+  assert.equal(fx.row('export-agent').status, 'ready');
+});
+
+test('read-back exception marks the job failed instead of leaving it running', { skip }, async () => {
+  const fx = await aiFixture();
+  const { token } = await runningJob(fx);
+  fx.setReadBack('THROW');
+  const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
+  assert.equal(response.status, 502);
+  assert.equal(fx.row('export-agent').status, 'failed');
+  assert.equal(fx.row('export-agent').failure_code, 'writeback_failed');
+});
+
+test('retry checks the placeholder first and does not fire when it changed', { skip }, async () => {
+  const fx = await aiFixture();
+  const { payload } = await runningJob(fx);
+  fx.db.database.prepare("UPDATE ai_jobs SET status='failed', failure_code='timeout' WHERE export_id='export-agent'").run();
+  fx.files.get(payload.resultFileId).meta.version = '9';
+  const firesBefore = fx.fires.length;
+  const response = await fx.session('/api/ai/jobs/export-agent/retry', 'POST', {});
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).error.code, 'placeholder_changed');
+  assert.equal(fx.fires.length, firesBefore);
+  assert.equal(fx.row('export-agent').status, 'failed');
+});
+
+test('transient Drive errors are not reported as placeholder changes', { skip }, async () => {
+  const fx = await aiFixture();
+  const { payload, token } = await runningJob(fx);
+  const realFetch = fx.env.__fetch;
+  fx.env.__fetch = async (input, options) => String(input).includes(`/files/${payload.resultFileId}?fields`) ? new Response('{}', { status: 503 }) : realFetch(input, options);
+  const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
+  assert.equal(response.status, 503);
+  assert.equal(fx.row('export-agent').status, 'running');
+  assert.equal(fx.uploads.length, 0);
+});

@@ -6,6 +6,8 @@
 
 ## 在 Claude Code 中的對應
 
+- **若你是被觸發的雲端整理任務**（觸發內容為 `export_id=… attempt=…`）：只照 `CLAUDE-ROUTINE.md` 做，它優先於本檔與 AGENTS.md 的其他段落；不寫程式、不開分支、不 commit／push、不使用 Drive 連接器。
+
 - 文件中提到「Codex」執行 AI 分類、讀取來源、產生結果的地方，在此由 Claude Code 擔任，流程與限制完全相同（不另接 AI API、fail closed、不搜尋 Notion 或其他私人工作區）。
 - `CODEX-*.md` 檔名保持不變，照樣閱讀並遵守。
 - **AI 整理的標準做法是雲端自動整理（v2.5.0）**：使用者在任一端按「送出整理」，Worker 觸發 Claude 雲端排程任務，任務依 `CLAUDE-ROUTINE.md` 處理（禁止 commit／push）；一次性設定見 `CLOUD-AI-SETUP.md`。修改 Worker 的 `/api/ai/*`、`organized-shape.mjs` 或 App AI 視窗前，先讀 `docs/superpowers/specs/2026-11-14-cloud-ai-routine-design.md`。

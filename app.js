@@ -841,7 +841,7 @@ async function refreshAgentCredentials() {
 async function createAgentCredential() {
   const name = $('#agent-credential-name').value.trim() || 'Claude 雲端整理';
   try {
-    const result = await state.backend.createAiAgentCredential(name, 180);
+    const result = await state.backend.createAiAgentCredential(name, 90);
     $('#agent-token').value = result.token; $('#agent-token-once').hidden = false;
     await refreshAgentCredentials(); toast('已建立 Claude 代理憑證；請立即貼到 Claude 雲端環境的 PA_AGENT_TOKEN');
   } catch (error) { toast(`建立 Claude 代理憑證失敗：${error.message}`, 8000); }
@@ -1155,6 +1155,10 @@ function bindEvents() {
     dialog.addEventListener('close', () => {
       const node = $('#toast');
       if (node.parentElement === dialog || dialog.contains(node)) document.body.append(node);
+      // One-time credentials must not linger in the page after the dialog closes.
+      for (const [field, panel] of [['#agent-token', '#agent-token-once'], ['#shortcut-token', '#shortcut-token-once']]) {
+        if (dialog.contains($(field))) { $(field).value = ''; $(panel).hidden = true; }
+      }
     });
   });
   $('#entry-form').addEventListener('submit', saveFromForm); $('#batch-form').addEventListener('submit', saveBatch); $('#image-form').addEventListener('submit', event => localEntryMutation(() => saveImages(event)));

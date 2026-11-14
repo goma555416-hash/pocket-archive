@@ -2,6 +2,7 @@
 
 - **Top-level task: `MASTER-TASK.md`.** Read it before implementing anything, then `CODEX-BRIEF.md`, `README.md`, `DESIGN-SPEC.md`, `AI-BATCH-SPEC.md`.
 - This is an existing functioning PWA. Preserve data/migration compatibility and existing completed work; refactor only for demonstrated need.
+- **Claude cloud routine exception:** when running as the cloud organize task (triggered with `export_id=… attempt=…`), follow `CLAUDE-ROUTINE.md`, which takes precedence: no branch, commit, push or PR, and no Drive connector.
 - **Execution contract:** deliver all feasible features in one autonomous task, with self-run automated tests and a single final reviewable PR/branch. Do not stop after a plan or first feature; do not require user approval at every development milestone. Follow `MASTER-TASK.md` acceptance tests.
 - Devices: **iPhone / iOS Safari + home-screen web app and Windows**. No Android-specific features unless separately requested.
 - Brand: **Pocket Archive**, Minimal & Modern, Butter Yellow `#FFF2C9` × Periwinkle `#CBD7EF`, **A3 solid bookmark Icon**. Icon selection is final for now; do not reopen design exploration.

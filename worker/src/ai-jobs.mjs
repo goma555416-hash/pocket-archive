@@ -31,8 +31,8 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
   async function createCredential(userId, { name, expiresInDays } = {}) {
     const createdAt = now();
     const label = String(name || 'Claude 雲端整理').trim().slice(0, 80) || 'Claude 雲端整理';
-    const requested = Number(expiresInDays ?? 180);
-    const days = Number.isFinite(requested) ? Math.max(1, Math.min(365, requested)) : 180;
+    const requested = Number(expiresInDays ?? 90);
+    const days = Number.isFinite(requested) ? Math.max(1, Math.min(365, requested)) : 90;
     const id = randomToken(12); const secret = randomToken(32);
     const expiresAt = createdAt + days * DAY;
     await db.prepare('INSERT INTO ai_agent_credentials (id,user_id,token_hash,name,created_at,expires_at) VALUES (?,?,?,?,?,?)')
@@ -73,8 +73,15 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
 
   async function driveMeta(userId, id) {
     const response = await driveFetch({ user_id: userId }, `${DRIVE_API}/files/${encodeURIComponent(id)}?fields=${encodeURIComponent(FILE_FIELDS)}`);
-    if (!response.ok) return null;
+    if (response.status === 404) return null;
+    if (!response.ok) throw httpError(503, 'drive_unavailable', 'Google Drive 暫時無法讀取，請稍後再試');
     return response.json();
+  }
+
+  // The placeholder is still the file we registered (or last wrote ourselves).
+  function placeholderUnchanged(placeholder, job) {
+    const binding = { exportId: job.export_id, inboxFileId: job.inbox_file_id, resultsFolderId: job.results_folder_id };
+    return resultBindingOk(placeholder, binding) && placeholder.version === job.result_version && placeholder.md5Checksum === job.result_md5;
   }
 
   function validateCreateBody(body) {
@@ -180,6 +187,11 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
     const row = await jobRow(session.user_id, exportId);
     if (!row) throw httpError(404, 'job_not_found', '找不到此 AI 整理工作');
     if (row.status !== 'failed') throw httpError(409, 'invalid_state', '只有失敗的工作可以重試');
+    if (!placeholderUnchanged(await driveMeta(session.user_id, row.result_file_id), row)) {
+      const message = '結果占位檔已被改動或刪除，無法重試；請重新送出，或改用備用手動流程匯入';
+      await db.prepare("UPDATE ai_jobs SET failure_code='placeholder_changed', failure_message=?, updated_at=? WHERE export_id=? AND status='failed'").bind(message, now(), exportId).run();
+      throw httpError(409, 'placeholder_changed', message);
+    }
     await db.prepare("UPDATE ai_jobs SET status='queued', failure_code=NULL, failure_message=NULL, finished_at=NULL, session_url=NULL, updated_at=? WHERE export_id=? AND status='failed'").bind(now(), exportId).run();
     await startNext(session.user_id);
     return publicJob(await jobRow(session.user_id, exportId));
@@ -241,8 +253,7 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
       throw httpError(422, code, error.message);
     }
     const placeholder = await driveMeta(job.user_id, job.result_file_id);
-    const binding = { exportId: job.export_id, inboxFileId: job.inbox_file_id, resultsFolderId: job.results_folder_id };
-    if (!resultBindingOk(placeholder, binding) || placeholder.version !== job.result_version || placeholder.md5Checksum !== job.result_md5) {
+    if (!placeholderUnchanged(placeholder, job)) {
       await markFailed(job.export_id, job.attempt_count, 'placeholder_changed', '結果占位檔在整理期間被改動或刪除，未寫回');
       await startNext(job.user_id);
       throw httpError(409, 'placeholder_changed', '結果占位檔在整理期間被改動或刪除，未寫回');
@@ -255,8 +266,20 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
       await startNext(job.user_id);
       throw httpError(502, 'writeback_failed', 'Google Drive 寫回失敗');
     }
-    const readBack = await driveFetch({ user_id: job.user_id }, `${DRIVE_API}/files/${encodeURIComponent(job.result_file_id)}?alt=media`);
-    const readText = readBack.ok ? await readBack.text() : null;
+    // Remember what we wrote so a later retry/resubmit of this job still
+    // recognises the placeholder as ours.
+    const written = await upload.json().catch(() => ({}));
+    await db.prepare('UPDATE ai_jobs SET result_version=?, result_md5=?, updated_at=? WHERE export_id=? AND attempt_count=?')
+      .bind(written.version || null, written.md5Checksum || null, now(), job.export_id, job.attempt_count).run();
+    let readText = null;
+    try {
+      const readBack = await driveFetch({ user_id: job.user_id }, `${DRIVE_API}/files/${encodeURIComponent(job.result_file_id)}?alt=media`);
+      readText = readBack.ok ? await readBack.text() : null;
+    } catch {
+      await markFailed(job.export_id, job.attempt_count, 'writeback_failed', '寫回後無法讀回驗證，可重試');
+      await startNext(job.user_id);
+      throw httpError(502, 'writeback_failed', '寫回後無法讀回驗證，可重試');
+    }
     if (readText === null || await sha256Text(readText) !== await sha256Text(text)) {
       await markFailed(job.export_id, job.attempt_count, 'writeback_mismatch', '寫回後讀回的內容不一致');
       await startNext(job.user_id);

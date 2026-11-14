@@ -2,6 +2,14 @@
 
 這份是 **Claude 雲端排程任務**（claude.ai 的 scheduled task／routine）每次被觸發時要照做的指令。觸發者是 Pocket Archive 後端，在使用者按下「送出整理」後呼叫。
 
+## 優先順序（先讀）
+
+在雲端任務中，**本文件優先於** `AGENTS.md` 與 `CLAUDE.md` 的其他段落：
+
+- `AGENTS.md` 的開發「Execution contract」（交付 PR／分支、自主完成功能）**不適用**。這個任務只整理一個批次，不寫程式、不開分支、不 commit、不 push。
+- 不要使用 Google Drive 連接器，也不要套用 `CLAUDE.md` 裡「Drive 自動交換必定 fail closed」的說法；那是指本機 Claude Code 用連接器覆寫檔案的舊路徑。這裡的批次讀取與寫回都經過 Pocket Archive 後端。
+- `CODEX-CONTENT-EVIDENCE.md`「開始前」第 1 步與 `CODEX-DRIVE-WORKFLOW.md` 的 file ID／parent／唯一性／原檔覆寫檢查，由後端在建立工作與寫回時完成；你這邊以 `routine-agent.mjs job`／`inbox`（含 SHA-256 核對）取代。逐筆取得內容、evidence 規則與 `validate-organized.mjs --require-evidence` 照常遵守。
+
 ## 輸入
 
 觸發內容（`<routine-fire-payload>`）只會有一行：`export_id=<id> attempt=<n>`。

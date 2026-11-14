@@ -66,6 +66,7 @@ export async function aiFixture({ configured = true } = {}) {
       return Response.json(file.meta);
     }
     if (url.searchParams.get('alt') === 'media') {
+      if (readBackOverride === 'THROW' && uploads.length) throw new Error('read-back network failure');
       const content = readBackOverride && uploads.length ? readBackOverride : file.content;
       return new Response(content, { headers: { 'content-type': file.meta.mimeType || 'application/octet-stream' } });
     }
