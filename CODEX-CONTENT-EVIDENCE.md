@@ -82,3 +82,14 @@
 - 優先沿用已有標籤、避免近義重複；不得更動人工類型/原備註/原網址/原分類。
 - 把完整 1:1 ID \`organized.json\` 用 \`node scripts/validate-organized.mjs organized.json <inbox.json|zip>\` 驗證，任何拒絕要修正；不可略過。Drive 版本只能在此前所有輸入和 SHA 驗證成功後**覆寫原 AI-Results 占位 file ID**並回讀驗證。
 - \`evidence\` 是**Codex 自述的讀取紀錄**，App 可核對欄位、來源 URL 和附件 SHA，但不能獨立證明網頁真的被模型閱讀；預覽介面也必須如實說明。最終仍由使用者人工選擇套用。
+
+## Claude Code 執行時
+
+規則完全相同，以下只補充 Claude Code 的工具對應：
+
+- **網路**：Claude Code 在使用者電腦上執行，通常有對外網路，但仍要以實際執行 `node scripts/collect-content-evidence.mjs` 的結果為準；腳本回報 unavailable／blocked 時照實輸出，不得改用其他抓取方式繞過其安全界線。
+- **不可替代的來源**：不得用網路搜尋結果、搜尋摘要、快取頁或第三方轉載代替該 item.url 的實際正文；不得用 Notion、Gmail、行事曆或其他已連接的私人服務補資料。
+- **網頁讀取工具**：WebFetch、瀏覽器分頁等工具回傳的可能是模型摘要而非逐字正文，不能當作 `content_read` 的 excerpt 來源。excerpt 必須是逐字出現在實際取得內容中的文字（以 `collect-content-evidence.mjs` 的輸出為優先）。
+- **圖片**：先從 ZIP 取出 `attachment.path` 指向的檔案到 `private-data/`，計算 SHA-256 並與 `attachment.hash` 比對，相符後再用 Read 工具實際檢視像素，才可輸出 `image_read`。
+- **影片**：沒有實際取得字幕或逐字稿文字時一律 `metadata_only`；不得依標題、說明欄或搜尋到的介紹文推測內容。
+- **私人資料**：批次檔、證據紀錄、解出的圖片與結果只放 `private-data/`；不得 commit、放進 PR／issue，或夾帶在對外服務的請求中。

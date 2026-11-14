@@ -93,3 +93,7 @@ Drive 送出後，App 先驗證既有原檔的 appProperties／父資料夾／�
 - App 只能驗證所提供 evidence 的欄位、來源 URL、與原圖 SHA；**無法獨立證明 Codex 真的造訪網頁或檢視圖片**。UI 將明示「Codex 回報」，最後依使用者人工確認套用。
 
 公開文章可在有網路許可的 Codex workspace 手動執行 `node scripts/collect-content-evidence.mjs <inbox.json|zip>`。該 Node CLI 只對符合安全界線的公開 HTTPS 文章做正文擷取，最多 100 筆、8 秒逾時、1MiB HTML 上限，拒絕登入/轉址/私網/社群頁；結果只寫至被忽略的 `private-data/`。對 Threads/Instagram/X/YouTube 等不能假稱已取得正文，仍需 Codex 具有正當可用的實際內容工具或使用者提供分享文字／截圖。
+
+## 執行 agent（Claude Code）
+
+schema、驗證器與人工套用流程不分 agent。Claude Code 目前的 Google Drive 連接器無法保留 file ID 覆寫檔案內容，Drive 批次只能停在寫回前；經使用者同意後，結果改以 `private-data/organized-<export_id>.json` 本機交接，由 App「匯入 organized JSON」套用。詳見 `CODEX-DRIVE-WORKFLOW.md`。
