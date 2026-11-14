@@ -574,7 +574,8 @@ try {
   }
   await ai.send('Emulation.clearDeviceMetricsOverride');
   await ai.evaluate("document.querySelector('#ai-dialog').close(); document.querySelector('#cloud-button').click(); document.querySelector('#agent-token').value='pa_agent_test.secret'; document.querySelector('#agent-token-once').hidden=false; document.querySelector('#cloud-dialog').close();");
-  assert.equal(await ai.evaluate("document.querySelector('#agent-token').value === '' && document.querySelector('#agent-token-once').hidden"), true, '關閉視窗後清除一次性代理憑證');
+  // The dialog 'close' event fires asynchronously after close(); wait for it.
+  await waitFor(() => ai.evaluate("document.querySelector('#agent-token').value === '' && document.querySelector('#agent-token-once').hidden"), '關閉視窗後清除一次性代理憑證', 3000);
   ai.close();
   process.stdout.write('E2E：雲端 AI 整理狀態、重試、圓點與 375/390px 通過\n');
 
