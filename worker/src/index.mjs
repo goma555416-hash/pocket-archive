@@ -432,6 +432,20 @@ async function aiRoute(request, env, path) {
       return json({ ok: true, revoked: id });
     });
   }
+  if (path === '/api/ai/jobs' && method === 'GET') {
+    return authenticatedResponse(request, env, {}, async session => json({ ok: true, configured: service.configured(), jobs: await service.listJobs(session.user_id) }, 200, { 'Cache-Control': 'no-store' }));
+  }
+  if (path === '/api/ai/jobs' && method === 'POST') {
+    return authenticatedResponse(request, env, { csrf: true }, async session => {
+      const result = await service.createJob(session, await readJson(request, 32 * 1024));
+      return json({ ok: true, ...result }, result.duplicate ? 200 : 201);
+    });
+  }
+  match = /^\/api\/ai\/jobs\/(export-[A-Za-z0-9._:-]{1,110})\/(retry|applied)$/.exec(path);
+  if (match && method === 'POST') {
+    const [, exportId, action] = match;
+    return authenticatedResponse(request, env, { csrf: true }, async session => json({ ok: true, job: action === 'retry' ? await service.retryJob(session, exportId) : await service.markApplied(session.user_id, exportId) }));
+  }
   match = AI_AGENT_JOB_PATH.exec(path);
   if (match) {
     const credential = await service.authenticateAgent(request);
@@ -630,7 +644,9 @@ export async function fetchHandler(request, env, ctx = {}) {
 }
 
 export async function scheduledHandler(_event, env, ctx) {
-  const work = captureImages(env).cleanup();
+  // The AI sweep must never block or fail the existing image cleanup.
+  const aiSweep = aiJobs(env).sweep().catch(error => console.error('ai_jobs_sweep_failed', error?.message || error));
+  const work = Promise.all([captureImages(env).cleanup(), aiSweep]);
   if (ctx?.waitUntil) ctx.waitUntil(work); else await work;
 }
 export default { fetch: fetchHandler, scheduled: scheduledHandler };
