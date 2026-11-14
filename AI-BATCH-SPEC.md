@@ -96,4 +96,4 @@ Drive 送出後，App 先驗證既有原檔的 appProperties／父資料夾／�
 
 ## 執行 agent（Claude Code）
 
-schema、驗證器與人工套用流程不分 agent。Claude Code 目前的 Google Drive 連接器無法保留 file ID 覆寫檔案內容，Drive 批次只能停在寫回前；經使用者同意後，結果改以 `private-data/organized-<export_id>.json` 本機交接，由 App「匯入 organized JSON」套用。詳見 `CODEX-DRIVE-WORKFLOW.md`。
+schema、驗證器與人工套用流程不分 agent。Claude Code 目前的 Google Drive 連接器無法保留 file ID 覆寫檔案內容，Drive 批次只能停在寫回前；經使用者同意後，結果改以 `private-data/organized-<export_id>.json` 本機交接，由 App「匯入 organized.json」套用。詳見 `CODEX-DRIVE-WORKFLOW.md`。
