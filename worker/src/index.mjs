@@ -419,7 +419,7 @@ const AI_AGENT_JOB_PATH = /^\/api\/ai\/agent\/jobs\/(export-[A-Za-z0-9._:-]{1,11
 async function aiRoute(request, env, path) {
   const service = aiJobs(env); const method = request.method;
   if (path === '/api/ai/agent-credentials' && method === 'POST') {
-    return authenticatedResponse(request, env, { csrf: true }, async session => json({ ok: true, ...(await service.createCredential(session.user_id, await readJson(request))), warning: '此憑證只顯示一次；請貼到 Claude 雲端環境的 PA_AGENT_TOKEN，外洩時立即撤銷。' }, 201));
+    return authenticatedResponse(request, env, { csrf: true }, async session => json({ ok: true, ...(await service.createCredential(session.user_id, await readJson(request))), warning: '此憑證只顯示一次；請貼到 claude.ai 雲端環境的 Network secrets（Bearer，Host 為後端網址），外洩時立即撤銷。' }, 201));
   }
   if (path === '/api/ai/agent-credentials' && method === 'GET') {
     return authenticatedResponse(request, env, {}, async session => json({ ok: true, credentials: await service.listCredentials(session.user_id) }));

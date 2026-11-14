@@ -23,7 +23,7 @@
 
 ## 步驟
 
-環境變數 `PA_AGENT_TOKEN`、`PA_BACKEND_ORIGIN` 由雲端環境提供；不要印出、寫入檔案或放進任何輸出。
+代理憑證是雲端環境的 **network secret**：Anthropic 的代理伺服器會在請求離開工作環境後，自動替連到 Pocket Archive 後端的請求加上 `Authorization` 標頭，所以你看不到憑證，`routine-agent.mjs` 也不需要它。不要嘗試尋找、印出或要求這把憑證。後端網址已內建，不需要設定（`PA_BACKEND_ORIGIN` 只在測試時覆寫用）。若工具回報 `agent_unauthorized`，代表 network secret 沒設定好，直接回報失敗即可（此時也無法呼叫 fail，請在最後的訊息說明）。
 
 1. 在儲存庫之外建立暫存資料夾（例如 `mktemp -d`），所有私人資料只放這裡。
 2. `node scripts/routine-agent.mjs job <export_id> <attempt>` 取得工作資訊（item ID、inbox 檔名）。

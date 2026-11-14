@@ -169,7 +169,7 @@
         <p class="privacy-note">Claude 雲端任務用這個憑證向 Pocket Archive 後端領取批次、交回結果；它只能處理「整理中」的批次，不能讀取其他收藏或 Google 授權。設定步驟見 CLOUD-AI-SETUP.md。</p>
         <label>憑證名稱<input id="agent-credential-name" type="text" maxlength="80" value="Claude 雲端整理" autocomplete="off" /></label>
         <button id="create-agent-credential" type="button" class="button outline">建立 Claude 代理憑證</button>
-        <div id="agent-token-once" class="preview-panel" hidden><strong>只顯示這一次</strong><p>請貼到 Claude 雲端環境的 network secret <code>PA_AGENT_TOKEN</code>，不要存在其他地方。</p><textarea id="agent-token" rows="3" readonly aria-label="Claude 代理憑證"></textarea><button id="copy-agent-token" type="button" class="button ghost small">複製憑證</button></div>
+        <div id="agent-token-once" class="preview-panel" hidden><strong>只顯示這一次</strong><p>請到 claude.ai 雲端任務的環境設定，在「Network secrets」新增一個 Bearer 秘密：Host 填 <code>pocket-archive.goma555416.workers.dev</code>，值貼上這串憑證。不要存在其他地方。詳細步驟見 CLOUD-AI-SETUP.md。</p><textarea id="agent-token" rows="3" readonly aria-label="Claude 代理憑證"></textarea><button id="copy-agent-token" type="button" class="button ghost small">複製憑證</button></div>
         <div id="agent-credentials"><p class="privacy-note">尚未建立 Claude 代理憑證。</p></div>
       </section>
       <section id="shortcut-section" class="cloud-section" aria-labelledby="shortcut-heading" hidden>
