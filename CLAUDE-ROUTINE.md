@@ -31,7 +31,7 @@
 4. 依 `CODEX-ORGANIZE-PROMPT.md` 與 `CODEX-CONTENT-EVIDENCE.md` **逐筆先取得內容與證據，再分類**：
    - 公開文章：`node scripts/collect-content-evidence.mjs <inbox>`（輸出寫在 `private-data/`，已被 .gitignore 排除；完成後刪除）。
    - 圖片：從 ZIP 取出 `attachment.path`，比對 SHA-256 後才檢視像素。
-   - 影片沒有字幕、社群貼文讀不到正文、需要登入或被擋：`insufficient_data`，不可腦補。
+   - 影片沒有字幕、社群貼文讀不到正文、需要登入、被驗證碼擋（`captcha_required`）或只有 JavaScript 動態內容：`insufficient_data`，不可腦補，也不要嘗試繞過驗證碼。若該筆收藏的備註（note）有至少 24 字可用，可依 CODEX-CONTENT-EVIDENCE.md 用 `user_share_text` 當證據。
 5. 產生 `<暫存資料夾>/organized.json`，執行 `node scripts/validate-organized.mjs <暫存資料夾>/organized.json <inbox> --require-evidence`，通過才繼續；不通過就修正，修不好就回報 fail。
 6. `node scripts/routine-agent.mjs submit <export_id> <attempt> <暫存資料夾>/organized.json`。後端會再驗證、寫回 Drive 占位檔並讀回比對。
 7. 任何無法完成的情況：`node scripts/routine-agent.mjs fail <export_id> <attempt> <code> <簡短原因>`。code 用小寫英文與底線（例如 `no_network`、`validation_failed`）；原因不得包含收藏網址、備註或內容。
