@@ -32,3 +32,7 @@ button,a,input,select,textarea{touch-action:manipulation}
 @media(max-width:600px){.entry-form input,.entry-form select,.entry-form textarea{font-size:16px}.card-actions button,.selection-bar button,.text-action,.star-button{min-height:44px;min-width:44px}}
 
 .skip-link{position:fixed;top:8px;left:8px;transform:translateY(-200%);z-index:100;background:#fff;padding:12px;color:#29344B}.skip-link:focus{transform:none}
+/* v2.5.0 cloud AI organize */
+.ai-button{position:relative}.ai-badge{position:absolute;top:4px;right:4px;width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px var(--paper)}
+.ai-status{margin:4px 0 0;padding:11px 13px;border:1px solid var(--line);border-radius:10px;background:var(--soft);color:var(--ink);line-height:1.55;overflow-wrap:anywhere}.ai-status:empty{display:none}.ai-status[data-tone="busy"]{background:var(--lavender-mist)}.ai-status[data-tone="ready"]{background:var(--butter)}.ai-status[data-tone="error"]{border-color:#e7b4b4;background:#fdf2f2}
+.ai-fallback{margin-top:6px}.ai-fallback summary{cursor:pointer;color:var(--muted)}

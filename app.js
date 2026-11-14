@@ -112,7 +112,7 @@ function cardHtml(entry) {
   const source = entry.kind === 'link' ? `↗ ${displayHost(entry.url)}${entry.type === '圖片' || entry.previewUrl ? ' · 外部圖片連結，未離線保存' : ''}` : `原圖已存於本機 · ${friendlyBytes(entry.attachment?.size || 0)}`;
   const media = entry.attachment ? `<button type="button" class="card-media original-preview" data-view-image="${id}" aria-label="檢視原圖：${title}"><span class="image-placeholder">載入圖片…</span><img data-attachment-id="${escapeHtml(entry.attachment.id)}" alt="" hidden /></button>` : entry.previewUrl ? `<div class="card-media"><img src="${escapeHtml(entry.previewUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" /></div>` : '';
   const note = entry.note ? `<p class="card-note">${escapeHtml(entry.note)}</p>` : '';
-  const summary = entry.aiSuggestion?.summary ? `<p class="ai-summary"><strong>Codex 建議</strong>${escapeHtml(entry.aiSuggestion.summary)}</p>` : '';
+  const summary = entry.aiSuggestion?.summary ? `<p class="ai-summary"><strong>AI 建議</strong>${escapeHtml(entry.aiSuggestion.summary)}</p>` : '';
   const tags = entry.tags.length ? entry.tags.map(tag => `<span class="tag"># ${escapeHtml(tag)}</span>`).join('') : '<span class="tag">尚未標籤</span>';
   const detail = entry.type === '網頁' && WEBPAGE_KINDS[entry.webpageKind] ? `<span class="content-detail">${WEBPAGE_KINDS[entry.webpageKind]}</span>` : '';
   const confirmation = entry.classification.status === 'provisional' ? '<span class="confirmation-label">待確認</span>' : entry.classification.status === 'manual' ? '<span class="content-detail">手動確認</span>' : '';
@@ -478,7 +478,7 @@ async function confirmImport() {
   } catch (error) { toast(error.message, 7500); }
 }
 
-async function exportForCodex() {
+async function exportForAi() {
   const chosen = state.selected.size ? state.entries.filter(entry => state.selected.has(entry.id)) : state.entries.filter(entry => entry.status === 'inbox');
   if (!chosen.length) { toast('沒有可匯出的待整理項目'); return; }
   try {
@@ -517,8 +517,8 @@ function showSuggestionPreview(result) {
     const verified = ['content_read', 'image_read'].includes(evidence.status);
     const defaultChecked = verified && item.analysisStatus === 'completed' ? ' checked' : '';
     const evidenceText = contentEvidenceLabel(evidence.status);
-    const sourceText = evidence.excerpt ? `<small>Codex 提供的內容證據：${escapeHtml(evidence.excerpt.slice(0, 400))}</small>` : '';
-    return `<li><label><input type="checkbox" data-suggestion-id="${escapeHtml(item.id)}"${defaultChecked} /><span><b>${escapeHtml(entry.title)}</b><small>現有標籤：${escapeHtml(entry.tags.join('、') || '無')} → 新增：${escapeHtml(added.join('、') || '無')} · ${item.analysisStatus === 'insufficient_data' ? '資料不足' : '已分析'} · 信心 ${escapeHtml(item.confidence)}</small><small>${escapeHtml(evidenceText)}（證據由 Codex 回報，App 不會自行重新爬取驗證）</small>${sourceText}${merged.pending.length ? `<small class="error-note">超過上限，保留於 AI 建議、不加入標籤：${escapeHtml(merged.pending.join('、'))}</small>` : ''}<em>${escapeHtml(item.summary || item.reason || '無摘要')}</em></span></label></li>`;
+    const sourceText = evidence.excerpt ? `<small>Claude 提供的內容證據：${escapeHtml(evidence.excerpt.slice(0, 400))}</small>` : '';
+    return `<li><label><input type="checkbox" data-suggestion-id="${escapeHtml(item.id)}"${defaultChecked} /><span><b>${escapeHtml(entry.title)}</b><small>現有標籤：${escapeHtml(entry.tags.join('、') || '無')} → 新增：${escapeHtml(added.join('、') || '無')} · ${item.analysisStatus === 'insufficient_data' ? '資料不足' : '已分析'} · 信心 ${escapeHtml(item.confidence)}</small><small>${escapeHtml(evidenceText)}（證據由 Claude 回報，App 不會自行重新爬取驗證）</small>${sourceText}${merged.pending.length ? `<small class="error-note">超過上限，保留於 AI 建議、不加入標籤：${escapeHtml(merged.pending.join('、'))}</small>` : ''}<em>${escapeHtml(item.summary || item.reason || '無摘要')}</em></span></label></li>`;
   }).join('')}</ul>${rejected.length ? `<p class="error-note">${rejected.length} 筆因未知 ID 或欄位錯誤不會套用。</p>` : ''}`;
   $('#apply-ai').hidden = accepted.length === 0;
 }
@@ -540,10 +540,10 @@ async function applyOrganized() {
 
 async function undoAi() {
   const undo = await state.repository.getMeta('ai-undo-snapshot');
-  if (!undo?.entries?.length) { toast('目前沒有可復原的 Codex 套用'); return; }
-  if (!confirm(`要復原上次 Codex 套用的 ${undo.entries.length} 筆變更嗎？`)) return;
+  if (!undo?.entries?.length) { toast('目前沒有可復原的 AI 套用'); return; }
+  if (!confirm(`要復原上次 AI 套用的 ${undo.entries.length} 筆變更嗎？`)) return;
   const restored = restoreSnapshot(state.entries, undo.entries);
-  if (await persistEntries(restored, `已復原 ${undo.entries.length} 筆 Codex 變更`)) await state.repository.setMeta('ai-undo-snapshot', null);
+  if (await persistEntries(restored, `已復原 ${undo.entries.length} 筆 AI 變更`)) await state.repository.setMeta('ai-undo-snapshot', null);
 }
 
 async function updateStorageSummary() {
@@ -651,6 +651,7 @@ function renderCloudStatus() {
   $('#legacy-google-settings').hidden = state.backendAvailable;
   $('#device-sessions-section').hidden = !state.backendAvailable || !state.backendSession;
   $('#shortcut-section').hidden = !state.backendAvailable || !state.backendSession;
+  $('#cloud-ai-section').hidden = !state.backendAvailable || !state.backendSession;
   renderAiStatus();
   const ownerSetup = $('#owner-bootstrap-section');
   if (ownerSetup) {
@@ -829,6 +830,23 @@ async function createCaptureCredential() {
   } catch (error) { toast(`建立捷徑憑證失敗：${error.message}`, 8000); }
 }
 
+async function refreshAgentCredentials() {
+  if (!state.backendSession) return;
+  try {
+    const result = await state.backend.listAiAgentCredentials(); const items = result.credentials || [];
+    $('#agent-credentials').innerHTML = items.length ? `<ul class="preview-list">${items.map(item => `<li><b>${escapeHtml(item.name)}</b><span>${item.revoked ? '已撤銷' : new Date(item.expiresAt).getTime() <= Date.now() ? '已到期' : `到期：${escapeHtml(new Date(item.expiresAt).toLocaleDateString('zh-TW'))}`}${!item.revoked ? `<button type="button" class="inline-button" data-revoke-agent="${escapeHtml(item.id)}">撤銷</button>` : ''}</span></li>`).join('')}</ul>` : '<p class="privacy-note">尚未建立 Claude 代理憑證。</p>';
+  } catch (error) { $('#agent-credentials').textContent = `無法取得 Claude 代理憑證：${error.message}`; }
+}
+
+async function createAgentCredential() {
+  const name = $('#agent-credential-name').value.trim() || 'Claude 雲端整理';
+  try {
+    const result = await state.backend.createAiAgentCredential(name, 180);
+    $('#agent-token').value = result.token; $('#agent-token-once').hidden = false;
+    await refreshAgentCredentials(); toast('已建立 Claude 代理憑證；請立即貼到 Claude 雲端環境的 PA_AGENT_TOKEN');
+  } catch (error) { toast(`建立 Claude 代理憑證失敗：${error.message}`, 8000); }
+}
+
 async function importCaptureJobs() {
   if (!state.backendSession || state.captureBusy) return;
   if (state.cloudBusy || state.localWriteBusy) { setTimeout(importCaptureJobs, 1500); return; }
@@ -874,7 +892,7 @@ async function restoreBackendSession() {
     state.workspace = await state.drive.ensureWorkspace(); state.backupService = new CloudBackupService(state.drive, state.workspace); state.aiExchange = new CloudAiExchange(state.drive, state.workspace); state.syncService = new CloudSyncService(state.drive, state.workspace);
     await state.repository.setMeta('drive-workspace', state.workspace); scheduleAutoBackup(900); scheduleAutoSync(1500);
   } catch (error) { state.drive = null; state.workspace = null; $('#cloud-backup-note').textContent = `Drive 授權需處理：${error.message}`; }
-  await Promise.all([refreshBackendSessions(), refreshCaptureCredentials()]); renderCloudStatus(); await importCaptureJobs();
+  await Promise.all([refreshBackendSessions(), refreshCaptureCredentials(), refreshAgentCredentials()]); renderCloudStatus(); await importCaptureJobs();
   if (state.backendSession) setTimeout(() => refreshAiJobs(), 2600);
 }
 
@@ -1033,6 +1051,8 @@ function renderAiStatus() {
   if (badge) badge.hidden = !ready;
   if (aiButton) aiButton.setAttribute('aria-label', ready ? 'AI 整理（有結果）' : 'AI 整理');
   if (!state.backendSession) { statusLine.dataset.tone = 'idle'; statusLine.textContent = '雲端整理需要登入 Pocket Archive 後端；仍可使用下方備用手動流程。'; return; }
+  const configuredNote = $('#cloud-ai-configured');
+  if (configuredNote) configuredNote.textContent = state.aiConfigured === false ? '後端尚未設定 Claude 雲端任務觸發（AI_ROUTINE_FIRE_URL／AI_ROUTINE_FIRE_TOKEN）。' : state.aiConfigured ? '後端已設定 Claude 雲端任務觸發。' : '正在確認雲端整理設定…';
   if (state.aiConfigured === false) { statusLine.dataset.tone = 'idle'; statusLine.textContent = '雲端整理尚未設定；請依 CLOUD-AI-SETUP.md 完成設定，或使用下方備用手動流程。'; return; }
   statusLine.dataset.tone = view.tone;
   statusLine.textContent = job ? `${view.label}　${view.detail}` : '選取項目後按「送出整理」；未選取時送出全部待整理收藏。';
@@ -1149,11 +1169,11 @@ function bindEvents() {
   const drop = $('#drop-zone'); ['dragenter', 'dragover'].forEach(name => drop.addEventListener(name, event => { event.preventDefault(); drop.classList.add('is-dragging'); })); ['dragleave', 'drop'].forEach(name => drop.addEventListener(name, event => { event.preventDefault(); drop.classList.remove('is-dragging'); })); drop.addEventListener('drop', event => prepareImages(event.dataTransfer.files));
   $('#export-backup').addEventListener('click', exportBackup); $('#export-migration').addEventListener('click', exportMigrationPackage); $('#import-backup').addEventListener('click', () => $('#backup-file').click()); $('#backup-file').addEventListener('change', importBackupFile); $('#confirm-import').addEventListener('click', () => localEntryMutation(confirmImport));
   $('#migration-banner-backup').addEventListener('click', () => openDialog('backup-dialog'));
-  $('#export-ai').addEventListener('click', exportForCodex); $('#import-ai').addEventListener('click', () => $('#organized-file').click()); $('#organized-file').addEventListener('change', importOrganized); $('#apply-ai').addEventListener('click', applyOrganized); $('#undo-ai').addEventListener('click', undoAi);
+  $('#export-ai').addEventListener('click', exportForAi); $('#import-ai').addEventListener('click', () => $('#organized-file').click()); $('#organized-file').addEventListener('change', importOrganized); $('#apply-ai').addEventListener('click', applyOrganized); $('#undo-ai').addEventListener('click', undoAi);
   $('#cloud-connect').addEventListener('click', connectDrive); $('#cloud-disconnect').addEventListener('click', disconnectDrive);
   $('#owner-bootstrap').addEventListener('click', bootstrapBackendOwner);
   $('#cloud-revoke-grant').addEventListener('click', revokeCloudGrant); $('#refresh-device-sessions').addEventListener('click', refreshBackendSessions);
-  $('#create-shortcut-credential').addEventListener('click', createCaptureCredential);
+  $('#create-shortcut-credential').addEventListener('click', createCaptureCredential); $('#create-agent-credential').addEventListener('click', createAgentCredential); $('#copy-agent-token').addEventListener('click', async () => { try { await navigator.clipboard.writeText($('#agent-token').value); toast('已複製 Claude 代理憑證'); } catch { $('#agent-token').select(); toast('請手動複製已選取的憑證'); } });
   $('#copy-shortcut-token').addEventListener('click', async () => { try { await navigator.clipboard.writeText($('#shortcut-token').value); toast('捷徑憑證已複製；請勿貼到聊天、網址或公開筆記'); } catch { $('#shortcut-token').select(); toast('無法自動複製，已選取憑證文字'); } });
   $('#google-client-id').addEventListener('input', event => { if (state.googleIdentityStatus === 'ready' && isValidGoogleClientId(event.target.value.trim())) prepareGoogleAuth(event.target.value.trim()); });
   $('#cloud-save-settings').addEventListener('click', async () => { await saveCloudSettingsFromForm(); renderCloudStatus(); toast('雲端設定已保存；密碼只保留到本頁關閉'); });
@@ -1180,6 +1200,7 @@ function bindEvents() {
   });
   document.addEventListener('change', event => { const input = event.target.closest('[data-select-id]'); if (!input) return; input.checked ? state.selected.add(input.dataset.selectId) : state.selected.delete(input.dataset.selectId); render(); });
   document.addEventListener('click', event => {
+    const revokeAgentButton = event.target.closest('[data-revoke-agent]'); if (revokeAgentButton) { state.backend.revokeAiAgentCredential(revokeAgentButton.dataset.revokeAgent).then(() => { toast('Claude 代理憑證已撤銷'); return refreshAgentCredentials(); }).catch(error => toast(`撤銷失敗：${error.message}`, 8000)); return; }
     const revokeCaptureButton = event.target.closest('[data-revoke-capture]'); if (revokeCaptureButton) { state.backend.revokeCaptureCredential(revokeCaptureButton.dataset.revokeCapture).then(() => { toast('快捷收藏憑證已撤銷'); return refreshCaptureCredentials(); }).catch(error => toast(`撤銷失敗：${error.message}`, 8000)); return; }
     const revokeSessionButton = event.target.closest('[data-revoke-session]'); if (revokeSessionButton) { state.backend.revokeSession(revokeSessionButton.dataset.revokeSession).then(() => { toast('裝置工作階段已撤銷'); return refreshBackendSessions(); }).catch(error => toast(`撤銷失敗：${error.message}`, 8000)); return; }
     const restoreButton = event.target.closest('[data-cloud-restore]'); if (restoreButton) { previewCloudRestore(Number(restoreButton.dataset.cloudRestore)); return; }

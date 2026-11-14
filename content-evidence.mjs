@@ -1,6 +1,6 @@
-// Shared evidence contract for Codex batch results. App can validate structure,
+// Shared evidence contract for AI batch results. App can validate structure,
 // the selected item's URL and an attachment hash, but CANNOT independently attest
-// that an external page was actually read. UI must call this Codex-reported evidence.
+// that an external page was actually read. UI must call this AI-reported evidence.
 const TEXT_KINDS = new Set(['article_body', 'post_text', 'transcript', 'user_share_text']);
 const EMPTY_STATUSES = new Set(['metadata_only', 'auth_required', 'blocked', 'unavailable']);
 const MIN_TEXT = { article_body: 80, post_text: 24, transcript: 80, user_share_text: 24 };
@@ -77,8 +77,8 @@ export function validateContentEvidence(raw, entry, suggestion) {
 
 export function contentEvidenceLabel(status) {
   return {
-    content_read: 'Codex 回報：已讀取文字內容',
-    image_read: 'Codex 回報：已檢視圖片',
+    content_read: 'Claude 回報：已讀取文字內容',
+    image_read: 'Claude 回報：已檢視圖片',
     metadata_only: '只有標題／中繼資料',
     blocked: '讀取遭阻擋',
     auth_required: '需登入，無法讀取',
