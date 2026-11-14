@@ -1,12 +1,15 @@
 // Cloud AI organize jobs: agent credentials, job queue, Claude routine
 // trigger and the agent API. D1 stores routing IDs, hashes and status only.
 import { randomToken, safeEqual, sha256Text } from './security.mjs';
+import { checkOrganizedForJob } from '../../organized-shape.mjs';
 
 const AGENT_TOKEN = /^Bearer\s+pa_agent_([A-Za-z0-9_-]{8,64})\.([A-Za-z0-9_-]{32,128})$/;
 const DAY = 86_400_000;
 const AGENT_RATE_PER_MINUTE = 60;
 const RUNNING_TIMEOUT = 60 * 60_000;
 const DRIVE_API = 'https://www.googleapis.com/drive/v3';
+const DRIVE_UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
+const MAX_RESULT_BYTES = 2 * 1024 * 1024;
 const FILE_FIELDS = 'id,name,mimeType,size,createdTime,modifiedTime,md5Checksum,version,appProperties,parents,trashed';
 const EXPORT_ID = /^export-[A-Za-z0-9._:-]{1,110}$/;
 const FILE_ID = /^[A-Za-z0-9_-]{4,256}$/;
@@ -200,15 +203,80 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
   }
 
   async function agentJobRow(credential, exportId, attempt) {
-    const job = await db.prepare('SELECT * FROM ai_jobs WHERE export_id=? AND user_id=?').bind(exportId, credential.user_id).first();
+    const job = await jobRow(credential.user_id, exportId);
     if (!job) throw httpError(404, 'job_not_found', '找不到此 AI 整理工作');
+    if (job.status !== 'running') throw httpError(409, 'invalid_state', '此 AI 整理工作目前不在整理中');
+    if (!Number.isInteger(attempt) || attempt !== job.attempt_count) throw httpError(409, 'stale_attempt', '這是舊的整理嘗試，已被取代');
     return job;
   }
 
   async function agentGetJob(credential, exportId, attempt) {
     const job = await agentJobRow(credential, exportId, attempt);
-    return { exportId: job.export_id };
+    const inbox = await driveMeta(job.user_id, job.inbox_file_id);
+    if (!inbox) throw httpError(502, 'drive_unavailable', '無法讀取 AI 批次 metadata');
+    return { exportId: job.export_id, attempt: job.attempt_count, itemIds: JSON.parse(job.item_ids), inboxName: inbox.name, inboxMimeType: inbox.mimeType, inboxSha256: job.inbox_sha256 };
   }
 
-  return { createCredential, listCredentials, revokeCredential, authenticateAgent, agentGetJob, configured, createJob, listJobs, retryJob, markApplied, sweep, startNext };
+  async function agentInbox(credential, exportId, attempt) {
+    const job = await agentJobRow(credential, exportId, attempt);
+    const response = await driveFetch({ user_id: job.user_id }, `${DRIVE_API}/files/${encodeURIComponent(job.inbox_file_id)}?alt=media`);
+    if (!response.ok) throw httpError(502, 'drive_unavailable', '無法下載 AI 批次');
+    const headers = new Headers({ 'Cache-Control': 'no-store', 'Content-Type': response.headers.get('content-type') || 'application/octet-stream' });
+    if (response.headers.get('content-length')) headers.set('Content-Length', response.headers.get('content-length'));
+    return new Response(response.body, { status: 200, headers });
+  }
+
+  async function agentSubmitResult(credential, exportId, attempt, request) {
+    const job = await agentJobRow(credential, exportId, attempt);
+    const declared = Number(request.headers.get('content-length') || 0);
+    const text = declared > MAX_RESULT_BYTES ? null : await request.text();
+    let checked;
+    try {
+      if (text === null) { const error = new Error('整理結果過大'); error.code = 'result_too_large'; throw error; }
+      checked = checkOrganizedForJob(text, { exportId: job.export_id, itemIds: JSON.parse(job.item_ids), maxBytes: MAX_RESULT_BYTES });
+    } catch (error) {
+      const code = error.code || 'result_invalid';
+      await markFailed(job.export_id, job.attempt_count, code, error.message);
+      await startNext(job.user_id);
+      throw httpError(422, code, error.message);
+    }
+    const placeholder = await driveMeta(job.user_id, job.result_file_id);
+    const binding = { exportId: job.export_id, inboxFileId: job.inbox_file_id, resultsFolderId: job.results_folder_id };
+    if (!resultBindingOk(placeholder, binding) || placeholder.version !== job.result_version || placeholder.md5Checksum !== job.result_md5) {
+      await markFailed(job.export_id, job.attempt_count, 'placeholder_changed', '結果占位檔在整理期間被改動或刪除，未寫回');
+      await startNext(job.user_id);
+      throw httpError(409, 'placeholder_changed', '結果占位檔在整理期間被改動或刪除，未寫回');
+    }
+    const upload = await driveFetch({ user_id: job.user_id }, `${DRIVE_UPLOAD}/files/${encodeURIComponent(job.result_file_id)}?uploadType=media&fields=${encodeURIComponent(FILE_FIELDS)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: text
+    });
+    if (!upload.ok) {
+      await markFailed(job.export_id, job.attempt_count, 'writeback_failed', 'Google Drive 寫回失敗');
+      await startNext(job.user_id);
+      throw httpError(502, 'writeback_failed', 'Google Drive 寫回失敗');
+    }
+    const readBack = await driveFetch({ user_id: job.user_id }, `${DRIVE_API}/files/${encodeURIComponent(job.result_file_id)}?alt=media`);
+    const readText = readBack.ok ? await readBack.text() : null;
+    if (readText === null || await sha256Text(readText) !== await sha256Text(text)) {
+      await markFailed(job.export_id, job.attempt_count, 'writeback_mismatch', '寫回後讀回的內容不一致');
+      await startNext(job.user_id);
+      throw httpError(502, 'writeback_mismatch', '寫回後讀回的內容不一致');
+    }
+    const finishedAt = now();
+    await db.prepare("UPDATE ai_jobs SET status='ready', finished_at=?, updated_at=? WHERE export_id=? AND attempt_count=? AND status='running'")
+      .bind(finishedAt, finishedAt, job.export_id, job.attempt_count).run();
+    await startNext(job.user_id);
+    return { job: publicJob(await jobRow(job.user_id, job.export_id)), items: checked.items.length };
+  }
+
+  async function agentFail(credential, exportId, attempt, body) {
+    const job = await agentJobRow(credential, exportId, attempt);
+    const code = typeof body?.code === 'string' && /^[a-z_]{1,40}$/.test(body.code) ? body.code : 'agent_reported';
+    const message = typeof body?.message === 'string' ? body.message.slice(0, 300) : '';
+    await markFailed(job.export_id, job.attempt_count, code, message);
+    await startNext(job.user_id);
+    return publicJob(await jobRow(job.user_id, job.export_id));
+  }
+
+  return { createCredential, listCredentials, revokeCredential, authenticateAgent, agentGetJob, agentInbox, agentSubmitResult, agentFail, configured, createJob, listJobs, retryJob, markApplied, sweep, startNext };
 }

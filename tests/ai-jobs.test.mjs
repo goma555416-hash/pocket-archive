@@ -176,3 +176,117 @@ test('sweep times out running after 60 minutes', { skip }, async () => {
   assert.equal(fx.row('export-t2').status, 'running');
   assert.equal(fx.fires.length, 2);
 });
+
+const at = '2026-11-14T10:00:00.000Z';
+const body80 = '文章逐段討論排版、視覺閱讀順序以及不同版面密度如何影響使用者的閱讀體驗，提供具體設計案例與改善建議。'.repeat(2);
+function organized(exportId, ids = ['a', 'b'], { withEvidence = true } = {}) {
+  return JSON.stringify({
+    format: 'pocket-archive-organized', schema_version: 2, source_export_id: exportId,
+    items: ids.map(id => ({
+      id, analysis_status: 'completed', suggested_categories: [], suggested_tags: ['排版'], summary: '摘要', reason: '正文', confidence: 'medium',
+      ...(withEvidence ? { evidence: { status: 'content_read', kind: 'article_body', source_url: 'https://example.org/a', excerpt: body80, observed_at: at } } : {})
+    }))
+  });
+}
+async function runningJob(fx, exportId = 'export-agent') {
+  const payload = fx.seedBatch(exportId, { inboxContent: '{"format":"pocket-archive-inbox","note":"private"}' });
+  await createJob(fx, payload);
+  return { payload, token: await fx.newAgentToken() };
+}
+
+test('agent reads running job and streams inbox', { skip }, async () => {
+  const fx = await aiFixture();
+  const { payload, token } = await runningJob(fx);
+  const info = await (await fx.agent(token, '/api/ai/agent/jobs/export-agent?attempt=1')).json();
+  assert.deepEqual(info.job, { exportId: 'export-agent', attempt: 1, itemIds: ['a', 'b'], inboxName: 'pocket-archive-inbox-2026-11-14-export-agent.json', inboxMimeType: 'application/json', inboxSha256: payload.inboxSha256 });
+  const inbox = await fx.agent(token, '/api/ai/agent/jobs/export-agent/inbox?attempt=1');
+  assert.equal(inbox.status, 200);
+  assert.equal(inbox.headers.get('cache-control'), 'no-store');
+  assert.equal(await inbox.text(), '{"format":"pocket-archive-inbox","note":"private"}');
+});
+
+test('valid result is written back and read back', { skip }, async () => {
+  const fx = await aiFixture();
+  const { payload, token } = await runningJob(fx);
+  await createJob(fx, fx.seedBatch('export-next'));
+  const text = organized('export-agent');
+  const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', text);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).job.status, 'ready');
+  assert.equal(fx.uploads.length, 1);
+  assert.equal(fx.uploads[0].id, payload.resultFileId);
+  assert.equal(fx.uploads[0].text, text);
+  assert.equal(fx.row('export-agent').status, 'ready');
+  assert.equal(fx.row('export-next').status, 'running');
+});
+
+test('invalid result fails job without writing', { skip }, async () => {
+  const fx = await aiFixture();
+  const { token } = await runningJob(fx);
+  const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent', ['a', 'b'], { withEvidence: false }));
+  assert.equal(response.status, 422);
+  assert.equal((await response.json()).error.code, 'result_evidence');
+  assert.equal(fx.row('export-agent').status, 'failed');
+  assert.equal(fx.row('export-agent').failure_code, 'result_evidence');
+  assert.equal(fx.uploads.length, 0);
+});
+
+test('placeholder changed blocks write', { skip }, async () => {
+  const fx = await aiFixture();
+  const { payload, token } = await runningJob(fx);
+  fx.files.get(payload.resultFileId).meta.version = '7';
+  const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
+  assert.equal(response.status, 409);
+  assert.equal(fx.row('export-agent').failure_code, 'placeholder_changed');
+  assert.equal(fx.uploads.length, 0);
+});
+
+test('writeback mismatch fails job', { skip }, async () => {
+  const fx = await aiFixture();
+  const { token } = await runningJob(fx);
+  fx.setReadBack('{"tampered":true}');
+  const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
+  assert.equal(response.status, 502);
+  assert.equal(fx.row('export-agent').status, 'failed');
+  assert.equal(fx.row('export-agent').failure_code, 'writeback_mismatch');
+});
+
+test('stale attempt is rejected', { skip }, async () => {
+  const fx = await aiFixture();
+  const { token } = await runningJob(fx);
+  fx.advance(61 * 60_000); await fx.cron();
+  assert.equal(fx.row('export-agent').failure_code, 'timeout');
+  await fx.session('/api/ai/jobs/export-agent/retry', 'POST', {});
+  assert.equal(fx.row('export-agent').attempt_count, 2);
+  const staleFail = await fx.agent(token, '/api/ai/agent/jobs/export-agent/fail?attempt=1', 'POST', JSON.stringify({ code: 'late', message: 'old session' }));
+  assert.equal(staleFail.status, 409);
+  assert.equal((await staleFail.json()).error.code, 'stale_attempt');
+  const staleResult = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
+  assert.equal(staleResult.status, 409);
+  assert.equal(fx.row('export-agent').status, 'running');
+  assert.equal(fx.row('export-agent').attempt_count, 2);
+  assert.equal(fx.uploads.length, 0);
+});
+
+test('agent fail records sanitized reason', { skip }, async () => {
+  const fx = await aiFixture();
+  const { token } = await runningJob(fx);
+  const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/fail?attempt=1', 'POST', JSON.stringify({ code: 'Bad-Code!', message: '原因'.repeat(250) }));
+  assert.equal(response.status, 200);
+  const row = fx.row('export-agent');
+  assert.equal(row.status, 'failed');
+  assert.equal(row.failure_code, 'agent_reported');
+  assert.equal(row.failure_message.length, 300);
+});
+
+test('agent cannot touch other users or non-running jobs', { skip }, async () => {
+  const fx = await aiFixture();
+  const { token } = await runningJob(fx);
+  fx.db.database.prepare("UPDATE ai_jobs SET user_id='user-2' WHERE export_id='export-agent'").run();
+  const other = await fx.agent(token, '/api/ai/agent/jobs/export-agent?attempt=1');
+  assert.equal(other.status, 404);
+  fx.db.database.prepare("UPDATE ai_jobs SET user_id='user-1', status='ready' WHERE export_id='export-agent'").run();
+  const notRunning = await fx.agent(token, '/api/ai/agent/jobs/export-agent/inbox?attempt=1');
+  assert.equal(notRunning.status, 409);
+  assert.equal((await notRunning.json()).error.code, 'invalid_state');
+});

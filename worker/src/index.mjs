@@ -451,7 +451,10 @@ async function aiRoute(request, env, path) {
     const credential = await service.authenticateAgent(request);
     const attempt = Number(new URL(request.url).searchParams.get('attempt'));
     const exportId = match[1]; const action = match[2] || '';
-    if (!action && method === 'GET') return json({ ok: true, job: await service.agentGetJob(credential, exportId, attempt) });
+    if (!action && method === 'GET') return json({ ok: true, job: await service.agentGetJob(credential, exportId, attempt) }, 200, { 'Cache-Control': 'no-store' });
+    if (action === '/inbox' && method === 'GET') return service.agentInbox(credential, exportId, attempt);
+    if (action === '/result' && method === 'PUT') return json({ ok: true, ...(await service.agentSubmitResult(credential, exportId, attempt, request)) });
+    if (action === '/fail' && method === 'POST') return json({ ok: true, job: await service.agentFail(credential, exportId, attempt, await readJson(request, 4096)) });
     throw httpError(405, 'method_not_allowed', '不支援的 AI 代理方法');
   }
   throw httpError(404, 'not_found', '找不到 AI API');
