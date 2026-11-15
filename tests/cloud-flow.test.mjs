@@ -5,7 +5,11 @@
 //   routine-agent job/inbox → collect-content-evidence → validate-organized
 //   → routine-agent submit → Worker validation → Drive write-back
 // and the written result is then read and applied with the App's own code.
-// Only Claude's judgment is replaced by a deterministic stand-in classifier.
+// Only Claude's judgment is replaced by a deterministic stand-in classifier
+// (keyword rules). This test therefore proves the PIPELINE — reading,
+// evidence, validation, write-back, App import — and NOT classification
+// quality. Its tags must never be reported as a Claude classification result;
+// that is only verified by a real claude.ai routine run.
 // Sites are local fixtures with known content (no external websites).
 //
 // In CI (PA_REQUIRE_FLOW=1) missing prerequisites FAIL instead of skipping.
@@ -52,7 +56,7 @@ function standInClassify(evidence) {
     : { analysis_status: 'insufficient_data', suggested_tags: [], suggested_categories: [], summary: '', reason: evidence.reason || '資料不足', confidence: 'low', evidence: read ? { status: 'metadata_only', kind: 'metadata', excerpt: '', source_url: evidence.source_url, observed_at: evidence.observed_at } : evidence };
 }
 
-test('cloud organize works end to end through the sandbox proxy and lands in the App', { skip, timeout: 120000 }, async () => {
+test('cloud organize pipeline works end to end through the sandbox proxy and lands in the App (stand-in classifier, not Claude)', { skip, timeout: 120000 }, async () => {
   assert.deepEqual(missing, [], `必要工具缺少：${missing.join('、')}`);
   const dir = await mkdtemp(join(tmpdir(), 'pa-flow-'));
   const servers = [];
@@ -148,12 +152,15 @@ test('cloud organize works end to end through the sandbox proxy and lands in the
     assert.equal(byName.spa.evidence.kind, 'site_description');
     assert.deepEqual(byName.spa.tags, ['白板工具']);
     // Truthfully not classified.
-    for (const name of ['bare', 'captcha', 'login', 'gone']) {
+    for (const name of ['bare', 'captcha', 'login', 'gone', 'verifyLong', 'signinLong']) {
       assert.equal(byName[name].analysisStatus, 'insufficient_data', name);
       assert.deepEqual(byName[name].tags, [], name);
     }
     assert.equal(byName.captcha.evidence.status, 'auth_required');
     assert.equal(byName.login.evidence.status, 'auth_required');
+    // Long (400+ chars) verification / login pages: recognised, not read as content.
+    assert.equal(byName.verifyLong.evidence.status, 'auth_required');
+    assert.equal(byName.signinLong.evidence.status, 'auth_required');
 
     const applied = applySuggestions(entries.map(e => e.entry), app.accepted, [byName.courseHome.id, byName.article.id]);
     assert.equal(applied.applied, 2);

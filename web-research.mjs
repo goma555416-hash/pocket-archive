@@ -30,7 +30,14 @@ const NOISE = [
   /^(?:skip to (?:main )?content|menu|close|メニュー|閉じる|top|back to top|ページトップ)$/i
 ];
 const CAPTCHA = /captcha|recaptcha|hcaptcha|cf-chl|challenge-platform|verify (?:you are|that you are) (?:a )?human|are you a robot|not a robot|人机验证|人機驗證|安全验证|环境异常|環境異常|ロボットではありません/i;
+// Strong signals are decisive at any text length: a blocking bot-challenge
+// script, or a page whose title/main heading IS the verification prompt. A
+// bare word "captcha" or a comment-form widget only counts on short pages, so
+// a long article about CAPTCHAs (or with a reCAPTCHA comment box) stays content.
+const CHALLENGE_SCRIPT = /cf-chl|challenge-platform|\/cdn-cgi\/challenge|captcha-delivery|px-captcha|perimeterx|datadome/i;
+const VERIFY_HEADLINE = /verify (?:you are|that you are) (?:a )?human|are you (?:a )?(?:robot|human)|security (?:check|verification)|just a moment|attention required|access denied|人机验证|人機驗證|安全验证|安全驗證|环境异常|環境異常|ロボットではありません|セキュリティ(?:チェック|確認)/i;
 const LOGIN = /\b(?:sign in|log ?in)\b|ログイン|登入|登录/i;
+const LOGIN_HEADLINE = /^(?:(?:please )?(?:sign|log) ?in\b|ログイン|登入|登录)|\b(?:sign|log) ?in to\b/i;
 const ERROR = /\b404\b|page not found|not found|ページが見つかりません|お探しのページ|找不到(?:頁面|页面|網頁)|页面不存在|頁面不存在/i;
 const ASSET = /\.(?:css|js|mjs|json|xml|rss|png|jpe?g|gif|webp|svg|ico|pdf|zip|gz|mp4|mp3|woff2?|ttf)$/i;
 const LOW_VALUE = /login|signin|sign-in|signup|register|cart|checkout|search|contact|privacy|policy|terms|cookie|sitemap|feed|wp-admin|logout|account/i;
@@ -126,7 +133,10 @@ export function parsePage(html, pageUrl) {
     links.push({ url: url.href, text: decode(m[2].replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 80) });
   }
   const visible = textLines(body).join(' ');
+  const heading = decode((/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/i.exec(html)?.[1] || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 200);
+  const scripts = (html.match(/<(?:script|iframe)\b[^>]*>/gi) || []).join(' ');
   return {
+    heading, challengeScript: CHALLENGE_SCRIPT.test(scripts),
     title, description, ogType, text, links, noiseLines,
     hasPassword: /<input\b[^>]*type\s*=\s*["']?password/i.test(html),
     hasTime: /<time\b[^>]*datetime/i.test(html),
@@ -136,7 +146,15 @@ export function parsePage(html, pageUrl) {
 
 // Whole-page state: content, or a page that must not be treated as content.
 export function pageState(page) {
-  if (page.text.length >= ENOUGH_SINGLE) return 'ok';
+  const headline = `${page.title} ${page.heading || ''}`;
+  // Decisive at any length.
+  if (page.challengeScript || VERIFY_HEADLINE.test(headline)) return 'captcha';
+  if (page.hasPassword && (LOGIN_HEADLINE.test(page.title) || LOGIN_HEADLINE.test(page.heading || ''))) return 'login';
+  // A real article (og:type/publish time) is content from ENOUGH_ARTICLE chars,
+  // the same threshold research uses; other pages from ENOUGH_SINGLE.
+  const isArticle = page.ogType === 'article' || page.hasTime;
+  if (page.text.length >= (isArticle ? ENOUGH_ARTICLE : ENOUGH_SINGLE)) return 'ok';
+  // Weak signals: only on pages with little real content.
   if (CAPTCHA.test(page.visibleSample)) return 'captcha';
   if (page.hasPassword && LOGIN.test(page.visibleSample)) return 'login';
   if (ERROR.test(page.title) || (page.text.length < MIN_BODY && ERROR.test(page.visibleSample))) return 'error';

@@ -12,7 +12,7 @@ import { writeVerifiedStamp } from './hooks/verified-tree.mjs';
 
 // Things no automated check here can prove; always reported, never "passed".
 const NOT_AUTOMATED = [
-  '真實 Claude 雲端任務（claude.ai routine）實際觸發與分類判斷',
+  '真實 Claude 雲端任務（claude.ai routine）實際觸發與分類判斷（自動測試的分類是固定規則模擬，不代表 Claude 的判斷）',
   'iPhone Safari／主畫面 App 實機操作',
   '正式 Cloudflare Worker 是否已部署為目前版本（合併後需 npx wrangler deploy）'
 ];
@@ -33,7 +33,7 @@ function runStep(name, args, env = {}) {
 const testFiles = readdirSync('tests').filter(name => name.endsWith('.test.mjs')).map(name => `tests/${name}`);
 const steps = [
   await runStep('單元／整合測試', ['--test', ...testFiles.filter(f => !f.endsWith('cloud-flow.test.mjs'))]),
-  await runStep('核心流程：雲端整理（模擬沙盒代理）', ['--test', 'tests/cloud-flow.test.mjs'], { PA_REQUIRE_FLOW: '1' }),
+  await runStep('核心流程：雲端整理管線（模擬沙盒代理；分類為固定規則模擬）', ['--test', 'tests/cloud-flow.test.mjs'], { PA_REQUIRE_FLOW: '1' }),
   await runStep('靜態資源檢查', ['scripts/validate-static-assets.mjs']),
   await runStep('瀏覽器 E2E（App 實際操作）', ['tests/e2e.mjs'])
 ];

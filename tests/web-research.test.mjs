@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { researchUrl, pickExplorationLinks, classifyPageType, parsePage } from '../web-research.mjs';
 import { fetchPublicArticleHtml } from '../codex-article-reader.mjs';
 import { validateEvidenceShape } from '../content-evidence.mjs';
-import { FIXTURE_URLS, fixtureFetchOnce, ARTICLE_PHRASE, ABOUT_PHRASE, SPA_DESCRIPTION } from './fixtures/web-sites.mjs';
+import { FIXTURE_URLS, BLOG_URL, BLOG_PHRASE, fixtureFetchOnce, ARTICLE_PHRASE, ABOUT_PHRASE, SPA_DESCRIPTION } from './fixtures/web-sites.mjs';
 
 const fetched = [];
 const fetchHtml = href => { fetched.push(href); return fetchPublicArticleHtml(href, { fetchOnce: fixtureFetchOnce }); };
@@ -58,6 +58,21 @@ test('captcha, login and error pages are reported truthfully, not read as conten
   const gone = await research(FIXTURE_URLS.gone);
   assert.deepEqual([gone.status, gone.reason], ['unavailable', 'error_page']);
   for (const ev of [captcha, login, gone]) validateEvidenceShape(ev, insufficient);
+});
+
+test('long verification and login pages (400+ chars) are still recognised, not read as content', async () => {
+  const verify = await research(FIXTURE_URLS.verifyLong);
+  assert.deepEqual([verify.status, verify.reason, verify.excerpt], ['auth_required', 'captcha_required', '']);
+  const signin = await research(FIXTURE_URLS.signinLong);
+  assert.deepEqual([signin.status, signin.reason, signin.excerpt], ['auth_required', 'login_required', '']);
+  for (const ev of [verify, signin]) validateEvidenceShape(ev, insufficient);
+});
+
+test('a long normal article mentioning CAPTCHA, with a comment widget and sidebar login, stays content', async () => {
+  const ev = await research(BLOG_URL);
+  assert.equal(ev.status, 'content_read');
+  assert.equal(ev.kind, 'article_body');
+  assert.ok(ev.excerpt.includes(BLOG_PHRASE));
 });
 
 test('a transient timeout on the item page is retried once; captcha is never retried', async () => {
