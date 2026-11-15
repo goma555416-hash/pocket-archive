@@ -181,7 +181,11 @@ export class CloudAiExchange {
     const expected = new Set(ids); const received = new Set(raw.items.map(item => item.id));
     if (!expected.size || expected.size !== ids.length || received.size !== raw.items.length || expected.size !== received.size || [...received].some(id => !expected.has(id))) throw new Error('結果 item ID 必須與來源批次完整一對一');
     const result = readOrganized(raw, { entries, exportIds });
-    if (result.rejected.length) throw new Error('結果含錯誤欄位或已不存在的 item ID');
+    if (result.rejected.length) {
+      const first = result.rejected[0];
+      const reason = first.reason === 'unknown-id' ? '收藏已不存在' : first.reason;
+      throw new Error(`結果有 ${result.rejected.length} 筆無法套用（${reason}）；若剛更新過版本，請重新整理頁面後再試`);
+    }
     return { pending: false, file, result };
   }
 }

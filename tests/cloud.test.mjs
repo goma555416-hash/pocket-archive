@@ -214,6 +214,9 @@ test('AI 結果原檔與完整 ID 驗證 fail closed，重複批次不能另建�
   delete raw.status; await assert.rejects(() => exchange.readResult(job, [entry], [exportId]), /完整一對一/);
   raw.items = [{ id: entry.id, analysis_status: 'insufficient_data', suggested_categories: [], suggested_tags: [], summary: '', reason: '未取得內容', confidence: 'low' }];
   assert.equal((await exchange.readResult(job, [entry], [exportId])).result.accepted.length, 1);
+  raw.items = [{ ...raw.items[0], analysis_status: 'completed', suggested_tags: ['x'], confidence: 'high', evidence: { status: 'metadata_only', kind: 'metadata', excerpt: '', source_url: entry.url, observed_at: '2026-11-15T00:00:00.000Z' } }];
+  await assert.rejects(() => exchange.readResult(job, [entry], [exportId]), /只取得標題或受阻時/, 'the rejection reason is shown, not only a generic message');
+  raw.items = [{ ...raw.items[0], analysis_status: 'insufficient_data', suggested_tags: [], confidence: 'low', evidence: undefined }];
   raw.items.push({ ...raw.items[0] }); await assert.rejects(() => exchange.readResult(job, [entry], [exportId]), /完整一對一/);
   raw.items = [{ ...raw.items[0], id: 'another-valid-local-item' }]; await assert.rejects(() => exchange.readResult(job, [entry], [exportId]), /完整一對一/);
   const { sha256 } = await import('../lib.mjs'); const jobKey = await sha256(new TextEncoder().encode(`${entry.id}:${entry.updatedAt}`));

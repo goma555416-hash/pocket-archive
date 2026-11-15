@@ -1252,7 +1252,7 @@ async function init() {
     toast(error.message, 10000); window.__PA_READY__ = false;
   }
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
-    const register = async () => { try { const registration = await navigator.serviceWorker.register('./sw.js'); registration.addEventListener('updatefound', () => toast('Pocket Archive 已下載更新，下次開啟即使用新版')); } catch { toast('離線快取註冊失敗；線上功能仍可使用'); } };
+    const register = async () => { try { const registration = await navigator.serviceWorker.register('./sw.js'); registration.addEventListener('updatefound', () => toast('Pocket Archive 已下載新版，請重新整理頁面（iPhone：完全關閉 App 再開啟）以使用新版', 8000)); } catch { toast('離線快取註冊失敗；線上功能仍可使用'); } };
     if (document.readyState === 'complete') register(); else window.addEventListener('load', register, { once: true });
   }
 }

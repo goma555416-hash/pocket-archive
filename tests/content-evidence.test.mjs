@@ -118,3 +118,16 @@ test('synthetic article fetch creates readable receipt; blocked and social remai
  });
  assert.equal(social.status,'unavailable');
 });
+
+test('an App left open on an older version still accepts evidence kinds added later (version skew)',async()=>{
+ const { validateEvidenceShape, contentEvidenceLabel } = await import('../content-evidence.mjs');
+ const text='Text read by a newer cloud task with an evidence kind this App build does not know yet. '.repeat(2);
+ const future=e('content_read','page_bundle_v9',text,{pages:[{url:entry.url}]});
+ const result=parse(row(future));
+ assert.equal(result.accepted.length,1,'future text kind with a real excerpt is accepted by the App');
+ assert.equal(result.accepted[0].evidence.status,'content_read');
+ assert.match(contentEvidenceLabel('content_read','page_bundle_v9'),/Claude 回報/);
+ assert.equal(parse(row(e('content_read','page_bundle_v9','too short'))).accepted.length,0,'still needs a real excerpt');
+ assert.equal(parse(row(e('content_read','metadata',text))).accepted.length,0,'reserved kinds are not text');
+ assert.throws(()=>validateEvidenceShape(future,{analysis_status:'completed',confidence:'medium'}),/類別無效/,'the Worker (always current) stays strict');
+});
