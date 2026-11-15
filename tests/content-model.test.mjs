@@ -173,3 +173,14 @@ test('單筆與批次採相同四類語意，不把推斷當人工選擇', () =>
     assert.equal(entry.type, row.type); assert.notEqual(entry.classification.status, 'manual');
   }
 });
+
+test('an applied, completed AI organisation hides the 待確認 badge without changing the stored classification', async () => {
+  const { needsTypeConfirmation } = await import('../content-model.mjs');
+  const base = { type: '網頁', classification: { status: 'provisional', evidence: 'page-url' } };
+  assert.equal(needsTypeConfirmation(base), true);
+  assert.equal(needsTypeConfirmation({ ...base, aiSuggestion: { analysisStatus: 'completed', appliedAt: '2026-11-15T07:00:00.000Z' } }), false);
+  assert.equal(needsTypeConfirmation({ ...base, aiSuggestion: { analysisStatus: 'insufficient_data', appliedAt: '2026-11-15T07:00:00.000Z' } }), true, 'insufficient data still needs a look');
+  assert.equal(needsTypeConfirmation({ ...base, aiSuggestion: { analysisStatus: 'completed' } }), true, 'a suggestion that was not applied does not count');
+  assert.equal(needsTypeConfirmation({ ...base, classification: { status: 'manual', evidence: 'manual' } }), false);
+  assert.equal(needsTypeConfirmation({ ...base, classification: { status: 'verified', evidence: 'image' } }), false);
+});

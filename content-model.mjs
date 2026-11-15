@@ -77,6 +77,16 @@ export function contentFields(data, url) {
   return { ...decision, legacyType, webpageKind: Object.hasOwn(WEBPAGE_KINDS, data.webpageKind) ? data.webpageKind : (data.type === '文章' ? 'article' : ''), tags: mergeTopicTags(data.tags, candidates).tags };
 }
 
+// Display rule only: an AI organisation the user previewed, selected and
+// applied, with content actually analysed, counts as reviewed, so the card no
+// longer asks for confirmation. The stored classification is not changed;
+// undoing the AI organisation brings the badge back.
+export function needsTypeConfirmation(entry) {
+  if (entry?.classification?.status !== 'provisional') return false;
+  const ai = entry.aiSuggestion;
+  return !(ai?.appliedAt && ai.analysisStatus === 'completed');
+}
+
 export function compatibilityPending(entry) {
   const candidates = [TOPICS.has(entry.legacyType) ? entry.legacyType : '', entry.category || '', ...(entry.aiSuggestion?.categories || []), ...(entry.aiSuggestion?.tags || [])];
   return preservedTags(candidates).filter(tag => !entry.tags.includes(tag));
