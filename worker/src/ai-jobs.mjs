@@ -2,6 +2,7 @@
 // trigger and the agent API. D1 stores routing IDs, hashes and status only.
 import { randomToken, safeEqual, sha256Text } from './security.mjs';
 import { checkOrganizedForJob } from '../../organized-shape.mjs';
+import { TEXT_KINDS } from '../../content-evidence.mjs';
 
 const AGENT_TOKEN = /^Bearer\s+pa_agent_([A-Za-z0-9_-]{8,64})\.([A-Za-z0-9_-]{32,128})$/;
 const DAY = 86_400_000;
@@ -226,7 +227,7 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
     const job = await agentJobRow(credential, exportId, attempt);
     const inbox = await driveMeta(job.user_id, job.inbox_file_id);
     if (!inbox) throw httpError(502, 'drive_unavailable', '無法讀取 AI 批次 metadata');
-    return { exportId: job.export_id, attempt: job.attempt_count, itemIds: JSON.parse(job.item_ids), inboxName: inbox.name, inboxMimeType: inbox.mimeType, inboxSha256: job.inbox_sha256 };
+    return { exportId: job.export_id, attempt: job.attempt_count, itemIds: JSON.parse(job.item_ids), inboxName: inbox.name, inboxMimeType: inbox.mimeType, inboxSha256: job.inbox_sha256, evidenceKinds: [...TEXT_KINDS] };
   }
 
   async function agentInbox(credential, exportId, attempt) {

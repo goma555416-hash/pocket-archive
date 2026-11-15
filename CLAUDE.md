@@ -15,5 +15,5 @@
 - Drive 自動交換為選用，在 Claude Code 中目前必定 fail closed（Google Drive 連接器 `update_file` 只能改 metadata，無法保留 file ID 覆寫內容），細節見 `CODEX-DRIVE-WORKFLOW.md` 的「Claude Code 執行時」。不得改名／移動占位檔或另建結果檔代替。
 - 讀取來源依 `CODEX-CONTENT-EVIDENCE.md` 的「Claude Code 執行時」：WebFetch／網路搜尋的摘要不能當正文 excerpt，圖片要先比對 SHA-256 再實際檢視。
 - 專案 skills 位於 `.agents/skills/`（Claude Code 不會自動載入此資料夾），依 AGENTS.md 指示直接讀取對應的 `SKILL.md`；與全域同名 skill 衝突時以專案版為準。
-- 開發驗證：`npm run test:all`（E2E 在 Windows 會自動找 Chrome／Edge）。
+- 開發驗證與交付：`npm run verify`（含模擬雲端代理的核心流程測試與瀏覽器 E2E；E2E 在 Windows 會自動找 Chrome／Edge）。只有顯示 `AUTOMATED` 才算完成；規則見 AGENTS.md「Delivery gate」。推送／開 PR 前 hook 會檢查這一點。
 - 使用繁體中文與使用者溝通。

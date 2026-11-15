@@ -1,9 +1,13 @@
 // Shared evidence contract for AI batch results. App can validate structure,
 // the selected item's URL and an attachment hash, but CANNOT independently attest
 // that an external page was actually read. UI must call this AI-reported evidence.
-const TEXT_KINDS = new Set(['article_body', 'post_text', 'transcript', 'user_share_text']);
+// web_pages: text read from the item's page and/or up to 3 same-host pages
+// (`pages` lists them). site_description: only the site's own description was
+// readable; agents must keep confidence at most medium.
+export const TEXT_KINDS = Object.freeze(['article_body', 'post_text', 'transcript', 'user_share_text', 'web_pages', 'site_description']);
+const TEXT_KIND_SET = new Set(TEXT_KINDS);
 const EMPTY_STATUSES = new Set(['metadata_only', 'auth_required', 'blocked', 'unavailable']);
-const MIN_TEXT = { article_body: 80, post_text: 24, transcript: 80, user_share_text: 24 };
+const MIN_TEXT = { article_body: 80, post_text: 24, transcript: 80, user_share_text: 24, web_pages: 80, site_description: 40 };
 const HASH = /^[0-9a-f]{64}$/;
 
 function validTimestamp(value) {
@@ -14,6 +18,19 @@ function validTimestamp(value) {
 function boundString(value, limit, label) {
   if (typeof value !== 'string' || value.length > limit) throw new Error(`內容證據的${label}無效`);
   return value.trim();
+}
+
+function validatePages(pages, sourceUrl) {
+  if (!Array.isArray(pages) || pages.length > 4) throw new Error('內容證據的頁面清單無效');
+  let host = '';
+  try { host = new URL(sourceUrl).hostname.toLowerCase(); } catch { throw new Error('內容證據的來源網址無效'); }
+  for (const page of pages) {
+    let url;
+    try { url = new URL(page?.url); } catch { throw new Error('內容證據的頁面網址無效'); }
+    if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== host || String(page.url).length > 2048) {
+      throw new Error('內容證據只能列出同一網站的 https 頁面');
+    }
+  }
 }
 
 // Checks that need no collection content (status/kind/excerpt/consistency).
@@ -29,8 +46,10 @@ export function validateEvidenceShape(raw, suggestion) {
   if (!['content_read', 'image_read', ...EMPTY_STATUSES].includes(status)) throw new Error('內容證據狀態無效');
 
   if (status === 'content_read') {
-    if (!TEXT_KINDS.has(kind)) throw new Error('文字證據類別無效');
+    if (!TEXT_KIND_SET.has(kind)) throw new Error('文字證據類別無效');
     if (excerpt.length < MIN_TEXT[kind]) throw new Error('正文摘錄不足，不能宣稱已讀取內容');
+    if (kind === 'site_description' && suggestion.confidence === 'high') throw new Error('只有網站自我描述時，信心不能是 high');
+    if (raw.pages !== undefined) validatePages(raw.pages, sourceUrl);
   } else if (status === 'image_read') {
     if (kind !== 'attached_image' || excerpt.length < 24 || !HASH.test(raw.attachment_sha256 || '')) {
       throw new Error('圖片證據缺少匹配的原始附件 SHA-256／內容描述');
@@ -75,7 +94,9 @@ export function validateContentEvidence(raw, entry, suggestion) {
   };
 }
 
-export function contentEvidenceLabel(status) {
+export function contentEvidenceLabel(status, kind = '') {
+  if (status === 'content_read' && kind === 'web_pages') return 'Claude 回報：已讀取網站頁面內容';
+  if (status === 'content_read' && kind === 'site_description') return 'Claude 回報：只讀到網站自我描述，信心較低';
   return {
     content_read: 'Claude 回報：已讀取文字內容',
     image_read: 'Claude 回報：已檢視圖片',

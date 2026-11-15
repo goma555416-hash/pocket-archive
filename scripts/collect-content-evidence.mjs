@@ -4,7 +4,7 @@
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readZip, decodeText } from '../archive.mjs';
-import { collectArticleEvidence } from '../codex-article-reader.mjs';
+import { researchUrl } from '../web-research.mjs';
 
 const input=process.argv[2];
 if(!input || process.argv.length!==3) {
@@ -36,9 +36,9 @@ try {
     const evidence=item.attachment ?
       {status:'unavailable',kind:'metadata',excerpt:'',source_url:item.url,
         observed_at:new Date().toISOString(),reason:'image_requires_visual_inspection'} :
-      await collectArticleEvidence(item);
+      await researchUrl(item);
     receipts.push({id:item.id,evidence});
-    process.stderr.write('已檢查 '+receipts.length+'/'+inbox.items.length+'，狀態：'+evidence.status+'\n');
+    process.stderr.write('已檢查 '+receipts.length+'/'+inbox.items.length+'，狀態：'+evidence.status+'（'+evidence.kind+'，'+(evidence.reason||'')+'）\n');
   }
   await mkdir('private-data',{recursive:true,mode:0o700});
   const output=join('private-data','content-evidence-'+inbox.export_id+'.json');

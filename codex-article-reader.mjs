@@ -83,8 +83,9 @@ const proxyConfigured = env => Boolean(env.HTTPS_PROXY || env.https_proxy || env
 export function articleTransport(env=process.env) { return proxyConfigured(env) ? 'curl' : 'direct'; }
 
 const META = '\n__PA_ARTICLE_META__';
-export function articleCurlArgs(url, { timeoutMs=8000, allowHttpForTest=false }={}) {
+export function articleCurlArgs(url, { timeoutMs=8000, allowHttpForTest=false, env=process.env }={}) {
   return ['-sS','--proto',allowHttpForTest?'=https,http':'=https','--max-redirs','0',
+    ...(env.CURL_CA_BUNDLE ? ['--cacert', env.CURL_CA_BUNDLE] : []),
     '--max-time',String(Math.ceil(timeoutMs/1000)),'--max-filesize',String(MAX_BYTES),
     '-H','Accept: text/html','-H','Accept-Encoding: identity','-H','User-Agent: PocketArchiveCodexEvidence/1.0',
     '-o','-','-w',META+'%{http_code}\t%{redirect_url}\t%{content_type}',url];

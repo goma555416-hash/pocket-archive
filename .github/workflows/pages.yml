@@ -25,7 +25,11 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm test
+      - name: Unit, integration and core cloud-organize flow (delivery gate)
+        run: npm test
+        env:
+          # The sandbox-proxy flow test must run in CI; missing tools fail instead of skipping.
+          PA_REQUIRE_FLOW: '1'
       - run: npm run test:security
 
   e2e:
