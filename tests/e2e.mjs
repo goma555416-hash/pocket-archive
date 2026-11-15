@@ -240,10 +240,12 @@ try {
   await waitFor(() => cdp.evaluate("!document.querySelector('#apply-ai').hidden"), 'Codex 差異預覽');
   assert.ok(await cdp.evaluate("document.querySelector('#ai-preview').textContent.includes('Claude 回報：已讀取網站頁面內容')"), '預覽應顯示網站頁面內容證據');
   assert.equal(await cdp.evaluate("document.querySelector('[data-suggestion-id]').checked"), true, '有正文證據的分類可預設勾選');
+  assert.equal(await cdp.evaluate("document.querySelector('[data-select-id=\"imported-e2e\"]')?.closest('.item-card')?.querySelector('.confirmation-label')?.textContent || ''"), '待確認', '套用前：類型尚未確認的收藏顯示待確認');
   await cdp.evaluate("document.querySelector('#apply-ai').click()");
   await waitFor(() => cdp.evaluate("!document.querySelector('#ai-dialog').open"), 'Codex 套用完成');
   await cdp.evaluate("document.querySelector('[data-view=saved]').click()");
   await waitFor(() => cdp.evaluate("document.querySelector('.ai-summary')?.textContent.includes('依可見測試內容產生的摘要')"), 'Codex 套用至已整理收藏');
+  assert.equal(await cdp.evaluate("document.querySelector('[data-select-id=\"imported-e2e\"]')?.closest('.item-card')?.querySelector('.confirmation-label')?.textContent || ''"), '', '套用 AI 整理後不再顯示待確認');
   await cdp.evaluate("window.confirm=()=>true; document.querySelector('#backup-button').click()");
   await waitFor(() => cdp.evaluate("!document.querySelector('#undo-ai').disabled"), 'Codex 復原快照已讀取');
   await cdp.evaluate("document.querySelector('#undo-ai').click()");
@@ -251,6 +253,7 @@ try {
   await cdp.evaluate("document.querySelector('[data-view=inbox]').click()");
   await waitFor(() => cdp.evaluate("[...document.querySelectorAll('.card-title')].some(node=>node.textContent.includes('還原收藏'))"), '復原後回到收件匣');
   assert.equal(await cdp.evaluate("document.querySelectorAll('.ai-summary').length"), 0, '復原後原始收藏沒有 AI 摘要');
+  assert.equal(await cdp.evaluate("document.querySelector('[data-select-id=\"imported-e2e\"]')?.closest('.item-card')?.querySelector('.confirmation-label')?.textContent || ''"), '待確認', '復原 AI 整理後恢復待確認');
   process.stdout.write('E2E：AI 預覽、套用與復原通過\n');
 
   await cdp.evaluate(`(() => {
@@ -504,7 +507,7 @@ try {
     await caches.open('pocket-archive-v2.3.1-ai-handoff');
     await navigator.serviceWorker.register('./sw.js?upgrade-v232');
   })()`);
-  await waitFor(() => cdp.evaluate("caches.keys().then(keys=>!keys.includes('pocket-archive-v2.3.1-ai-handoff') && keys.includes('pocket-archive-v2.5.2-version-skew'))"), '舊快取更新清除');
+  await waitFor(() => cdp.evaluate("caches.keys().then(keys=>!keys.includes('pocket-archive-v2.3.1-ai-handoff') && keys.includes('pocket-archive-v2.5.3-ai-reviewed'))"), '舊快取更新清除');
   assert.ok(await cdp.evaluate("caches.match('./content-evidence.mjs').then(Boolean)"), '新分類模組已離線快取');
   await cdp.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
   await cdp.send('Page.reload');

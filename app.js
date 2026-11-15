@@ -1,6 +1,6 @@
 import { receiveCaptureJob, imageDimensions } from './capture-client.mjs';
 import { identifySocialMediaUrl, identifySocialPlatform } from './social-metadata.mjs';
-import { classifyContent, WEBPAGE_KINDS, inputTags, mergeTopicTags, compatibilityPending } from './content-model.mjs';
+import { classifyContent, WEBPAGE_KINDS, inputTags, mergeTopicTags, compatibilityPending, needsTypeConfirmation } from './content-model.mjs';
 import { markCloudJobApplied } from './ai-launch.mjs';
 import { aiJobStatusView, currentAiJob, hasReadyAiJob, reviewExportIds } from './ai-jobs-client.mjs';
 import { contentEvidenceLabel } from './content-evidence.mjs';
@@ -115,7 +115,7 @@ function cardHtml(entry) {
   const summary = entry.aiSuggestion?.summary ? `<p class="ai-summary"><strong>AI 建議</strong>${escapeHtml(entry.aiSuggestion.summary)}</p>` : '';
   const tags = entry.tags.length ? entry.tags.map(tag => `<span class="tag"># ${escapeHtml(tag)}</span>`).join('') : '<span class="tag">尚未標籤</span>';
   const detail = entry.type === '網頁' && WEBPAGE_KINDS[entry.webpageKind] ? `<span class="content-detail">${WEBPAGE_KINDS[entry.webpageKind]}</span>` : '';
-  const confirmation = entry.classification.status === 'provisional' ? '<span class="confirmation-label">待確認</span>' : entry.classification.status === 'manual' ? '<span class="content-detail">手動確認</span>' : '';
+  const confirmation = needsTypeConfirmation(entry) ? '<span class="confirmation-label">待確認</span>' : entry.classification.status === 'manual' ? '<span class="content-detail">手動確認</span>' : '';
   const pending = compatibilityPending(entry);
   const compatibility = pending.length ? `<p class="compatibility-note">舊分類或 AI 標籤尚未轉入，原值已保留；可在編輯中整理標籤後補入：${escapeHtml(pending.join('、'))}</p>` : '';
   const date = new Date(entry.createdAt).toLocaleDateString('zh-TW', { year: 'numeric', month: 'short', day: 'numeric' });
