@@ -516,7 +516,7 @@ function showSuggestionPreview(result) {
     const evidence = item.evidence;
     const verified = ['content_read', 'image_read'].includes(evidence.status);
     const defaultChecked = verified && item.analysisStatus === 'completed' ? ' checked' : '';
-    const evidenceText = contentEvidenceLabel(evidence.status);
+    const evidenceText = contentEvidenceLabel(evidence.status, evidence.kind);
     const sourceText = evidence.excerpt ? `<small>Claude 提供的內容證據：${escapeHtml(evidence.excerpt.slice(0, 400))}</small>` : '';
     return `<li><label><input type="checkbox" data-suggestion-id="${escapeHtml(item.id)}"${defaultChecked} /><span><b>${escapeHtml(entry.title)}</b><small>現有標籤：${escapeHtml(entry.tags.join('、') || '無')} → 新增：${escapeHtml(added.join('、') || '無')} · ${item.analysisStatus === 'insufficient_data' ? '資料不足' : '已分析'} · 信心 ${escapeHtml(item.confidence)}</small><small>${escapeHtml(evidenceText)}（證據由 Claude 回報，App 不會自行重新爬取驗證）</small>${sourceText}${merged.pending.length ? `<small class="error-note">超過上限，保留於 AI 建議、不加入標籤：${escapeHtml(merged.pending.join('、'))}</small>` : ''}<em>${escapeHtml(item.summary || item.reason || '無摘要')}</em></span></label></li>`;
   }).join('')}</ul>${rejected.length ? `<p class="error-note">${rejected.length} 筆因未知 ID 或欄位錯誤不會套用。</p>` : ''}`;

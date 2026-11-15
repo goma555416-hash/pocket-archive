@@ -33,8 +33,11 @@ function proxyConfigured(env) { return Boolean(env.HTTPS_PROXY || env.https_prox
 // which honours the proxy settings and the sandbox CA.
 export function pickTransport(env) { return proxyConfigured(env) ? 'curl' : 'fetch'; }
 
-export function curlArgs(url, init = {}) {
+// CURL_CA_BUNDLE is passed explicitly: Windows (Schannel) curl ignores the
+// variable but honours --cacert, so behaviour is the same on every platform.
+export function curlArgs(url, init = {}, env = process.env) {
   const args = ['-sS', '-X', (init.method || 'GET').toUpperCase(), '-o', '-', '-w', `${STATUS_MARKER}%{http_code}`];
+  if (env.CURL_CA_BUNDLE) args.push('--cacert', env.CURL_CA_BUNDLE);
   for (const [name, value] of Object.entries(init.headers || {})) args.push('-H', `${name}: ${value}`);
   if (init.body !== undefined && init.body !== null) args.push('--data-binary', '@-');
   args.push(url);
@@ -57,6 +60,28 @@ export function curlFetch(url, init = {}) {
     });
     if (init.body !== undefined && init.body !== null) child.stdin.end(init.body); else child.stdin.end();
   });
+}
+
+// Evidence kinds every deployed Worker accepts. A Worker that predates
+// web_pages/site_description does not list evidenceKinds in its job response.
+const LEGACY_EVIDENCE_KINDS = ['article_body', 'post_text', 'transcript', 'user_share_text'];
+
+// If the Worker has not been redeployed yet, items whose evidence kind it would
+// reject are downgraded to insufficient_data so the rest of the batch is still
+// delivered (instead of the whole job failing with result_evidence).
+export function downgradeUnsupportedEvidence(organized, kinds) {
+  const allowed = new Set(Array.isArray(kinds) && kinds.length ? kinds : LEGACY_EVIDENCE_KINDS);
+  let downgraded = 0;
+  for (const item of organized?.items || []) {
+    const evidence = item?.evidence;
+    if (evidence?.status !== 'content_read' || allowed.has(evidence.kind)) continue;
+    downgraded += 1;
+    item.analysis_status = 'insufficient_data';
+    item.suggested_tags = []; item.suggested_categories = []; item.summary = ''; item.confidence = 'low';
+    item.reason = '後端 Worker 尚未更新，無法接受此類內容證據；請部署 Worker 後重試';
+    item.evidence = { status: 'metadata_only', kind: 'metadata', excerpt: '', source_url: evidence.source_url || '', observed_at: evidence.observed_at, reason: 'worker_outdated' };
+  }
+  return downgraded;
 }
 
 function backendOrigin(env) { return (env.PA_BACKEND_ORIGIN || DEFAULT_BACKEND_ORIGIN).replace(/\/+$/, ''); }
@@ -118,7 +143,19 @@ export async function runAgentCommand(argv, { env = process.env, fetchImpl, stdo
     if (command === 'submit') {
       const [organizedPath] = rest;
       if (!organizedPath) { line(stderr, '需要 organized.json 路徑'); return 2; }
-      const body = await readFile(organizedPath, 'utf8');
+      let body = await readFile(organizedPath, 'utf8');
+      const info = await api(fetchImpl, env, `${base}${query}`);
+      if (!info.ok) { line(stderr, await errorTextWithHints(info)); return 1; }
+      const kinds = (await info.json().catch(() => ({})))?.job?.evidenceKinds;
+      let parsed = null;
+      try { parsed = JSON.parse(body); } catch { /* the Worker reports invalid JSON */ }
+      if (parsed) {
+        const downgraded = downgradeUnsupportedEvidence(parsed, kinds);
+        if (downgraded) {
+          body = JSON.stringify(parsed);
+          line(stderr, `警告：後端 Worker 版本較舊，${downgraded} 筆新型內容證據已改為資料不足。請部署 Worker（npx wrangler deploy）後按「重試」。`);
+        }
+      }
       const response = await api(fetchImpl, env, `${base}/result${query}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body });
       if (!response.ok) { line(stderr, await errorTextWithHints(response)); return 1; }
       const data = await response.json();

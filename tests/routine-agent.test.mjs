@@ -41,6 +41,7 @@ test('submit sends bearer token and attempt, never prints the token', async () =
   const fetchImpl = async (url, init = {}) => { calls.push({ url: String(url), init }); return Response.json({ ok: true, job: { status: 'ready' } }); };
   const out = sink(); const err = sink();
   assert.equal(await runAgentCommand(['submit', 'export-x', '2', file], { env, fetchImpl, stdout: out, stderr: err }), 0);
+  calls.splice(0, calls.findIndex(c => c.init.method === 'PUT'));
   assert.equal(calls[0].url, 'https://backend.example/api/ai/agent/jobs/export-x/result?attempt=2');
   assert.equal(calls[0].init.method, 'PUT');
   assert.equal(calls[0].init.headers.Authorization, `Bearer ${TOKEN}`);
@@ -131,4 +132,45 @@ test('curlFetch round-trips status, binary body and request body through real cu
     assert.equal((await put.json()).error.code, 'result_evidence');
     assert.deepEqual(received, { method: 'PUT', auth: null, type: 'application/json', body: '{"items":[]}' });
   } finally { server.close(); }
+});
+
+test('submit downgrades evidence kinds an older Worker does not accept, instead of failing the whole job', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'pa-agent-'));
+  const ev = kind => ({ status: 'content_read', kind, excerpt: 'x'.repeat(120), source_url: 'https://site.example.org/', observed_at: '2026-11-15T00:00:00.000Z' });
+  const organized = { format: 'pocket-archive-organized', schema_version: 2, source_export_id: 'export-x', items: [
+    { id: 'a', analysis_status: 'completed', suggested_tags: ['日語學習'], suggested_categories: [], summary: 's', reason: 'r', confidence: 'medium', evidence: ev('web_pages') },
+    { id: 'b', analysis_status: 'completed', suggested_tags: ['文章'], suggested_categories: [], summary: 's', reason: 'r', confidence: 'high', evidence: ev('article_body') }
+  ] };
+  const file = join(dir, 'organized.json'); await writeFile(file, JSON.stringify(organized));
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    if (init.method === 'PUT') return Response.json({ ok: true, job: { status: 'ready' } });
+    return Response.json({ ok: true, job: { exportId: 'export-x', attempt: 1 } }); // old Worker: no evidenceKinds
+  };
+  const err = sink();
+  assert.equal(await runAgentCommand(['submit', 'export-x', '1', file], { env, fetchImpl, stdout: sink(), stderr: err }), 0);
+  const sent = JSON.parse(calls.find(c => c.init.method === 'PUT').init.body);
+  assert.equal(sent.items[0].analysis_status, 'insufficient_data');
+  assert.deepEqual(sent.items[0].suggested_tags, []);
+  assert.equal(sent.items[0].confidence, 'low');
+  assert.equal(sent.items[0].evidence.status, 'metadata_only');
+  assert.equal(sent.items[0].evidence.excerpt, '');
+  assert.equal(sent.items[0].evidence.reason, 'worker_outdated');
+  assert.equal(sent.items[1].analysis_status, 'completed', 'supported kinds are untouched');
+  assert.match(err.lines.join(''), /Worker/);
+});
+
+test('submit keeps new evidence kinds when the Worker advertises them', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'pa-agent-'));
+  const organized = { items: [{ id: 'a', analysis_status: 'completed', evidence: { status: 'content_read', kind: 'web_pages', excerpt: 'x'.repeat(90) } }] };
+  const file = join(dir, 'organized.json'); await writeFile(file, JSON.stringify(organized));
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    calls.push({ init });
+    if (init.method === 'PUT') return Response.json({ ok: true, job: { status: 'ready' } });
+    return Response.json({ ok: true, job: { evidenceKinds: ['article_body', 'web_pages', 'site_description'] } });
+  };
+  assert.equal(await runAgentCommand(['submit', 'export-x', '1', file], { env, fetchImpl, stdout: sink(), stderr: sink() }), 0);
+  assert.equal(calls.find(c => c.init.method === 'PUT').init.body, JSON.stringify(organized));
 });

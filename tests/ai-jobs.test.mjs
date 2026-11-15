@@ -198,7 +198,7 @@ test('agent reads running job and streams inbox', { skip }, async () => {
   const fx = await aiFixture();
   const { payload, token } = await runningJob(fx);
   const info = await (await fx.agent(token, '/api/ai/agent/jobs/export-agent?attempt=1')).json();
-  assert.deepEqual(info.job, { exportId: 'export-agent', attempt: 1, itemIds: ['a', 'b'], inboxName: 'pocket-archive-inbox-2026-11-14-export-agent.json', inboxMimeType: 'application/json', inboxSha256: payload.inboxSha256 });
+  assert.deepEqual(info.job, { exportId: 'export-agent', attempt: 1, itemIds: ['a', 'b'], inboxName: 'pocket-archive-inbox-2026-11-14-export-agent.json', inboxMimeType: 'application/json', inboxSha256: payload.inboxSha256, evidenceKinds: ['article_body', 'post_text', 'transcript', 'user_share_text', 'web_pages', 'site_description'] });
   const inbox = await fx.agent(token, '/api/ai/agent/jobs/export-agent/inbox?attempt=1');
   assert.equal(inbox.status, 200);
   assert.equal(inbox.headers.get('cache-control'), 'no-store');
