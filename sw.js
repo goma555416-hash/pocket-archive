@@ -1,4 +1,4 @@
-const CACHE = 'pocket-archive-v2.5.1-web-research';
+const CACHE = 'pocket-archive-v2.5.2-version-skew';
 const RESOURCES = ['./','./index.html','./styles.css','./theme.css','./app.js','./lib.mjs','./content-model.mjs','./content-evidence.mjs','./db.mjs','./archive.mjs','./drive.mjs','./backend.mjs','./migration.mjs','./crypto.mjs','./sync.mjs','./cloud.mjs','./image-viewer.mjs','./ai-launch.mjs','./ai-jobs-client.mjs','./organized-shape.mjs','./capture-client.mjs','./social-metadata.mjs','./manifest.webmanifest','./icons/icon.svg','./icons/icon-180.png','./icons/icon-192.png','./icons/icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(RESOURCES)).then(() => self.skipWaiting()));

@@ -35,7 +35,16 @@ function validatePages(pages, sourceUrl) {
 
 // Checks that need no collection content (status/kind/excerpt/consistency).
 // Shared by the Worker (which never stores URLs/notes) and the App.
-export function validateEvidenceShape(raw, suggestion) {
+// The cloud task always runs the newest code, but an App tab can still be on
+// an older cached build. allowFutureKinds (App only) accepts a text evidence
+// kind this build does not know yet when it carries a real excerpt, so a
+// version gap degrades the label instead of rejecting the whole result. The
+// Worker, which is current with the routine, stays strict.
+const FUTURE_KIND = /^[a-z][a-z0-9_]{2,31}$/;
+const RESERVED_KINDS = new Set(['metadata', 'attached_image']);
+const FUTURE_MIN_TEXT = 80;
+
+export function validateEvidenceShape(raw, suggestion, { allowFutureKinds = false } = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('內容證據格式無效');
   const status = raw.status;
   const kind = boundString(raw.kind, 32, '類別');
@@ -46,8 +55,10 @@ export function validateEvidenceShape(raw, suggestion) {
   if (!['content_read', 'image_read', ...EMPTY_STATUSES].includes(status)) throw new Error('內容證據狀態無效');
 
   if (status === 'content_read') {
-    if (!TEXT_KIND_SET.has(kind)) throw new Error('文字證據類別無效');
-    if (excerpt.length < MIN_TEXT[kind]) throw new Error('正文摘錄不足，不能宣稱已讀取內容');
+    const known = TEXT_KIND_SET.has(kind);
+    const future = !known && allowFutureKinds && FUTURE_KIND.test(kind) && !RESERVED_KINDS.has(kind);
+    if (!known && !future) throw new Error('文字證據類別無效');
+    if (excerpt.length < (known ? MIN_TEXT[kind] : FUTURE_MIN_TEXT)) throw new Error('正文摘錄不足，不能宣稱已讀取內容');
     if (kind === 'site_description' && suggestion.confidence === 'high') throw new Error('只有網站自我描述時，信心不能是 high');
     if (raw.pages !== undefined) validatePages(raw.pages, sourceUrl);
   } else if (status === 'image_read') {
@@ -74,7 +85,7 @@ export function validateContentEvidence(raw, entry, suggestion) {
   // Already-issued schema-v2 results must remain importable. They are displayed
   // as legacy/unverified; a missing evidence receipt does not imply content read.
   if (raw === undefined) return { status: 'legacy_unverified', kind: '', excerpt: '' };
-  const { status, kind, excerpt, sourceUrl, observedAt } = validateEvidenceShape(raw, suggestion);
+  const { status, kind, excerpt, sourceUrl, observedAt } = validateEvidenceShape(raw, suggestion, { allowFutureKinds: true });
   if (status === 'content_read') {
     if (!entry?.url || sourceUrl !== entry.url) throw new Error('讀取來源與此筆收藏網址不符');
     if (kind === 'user_share_text' && !String(entry.note || '').includes(excerpt)) {
