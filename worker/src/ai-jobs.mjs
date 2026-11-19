@@ -205,7 +205,8 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
     const row = await jobRow(session.user_id, exportId);
     if (!row) throw httpError(404, 'job_not_found', '找不到此 AI 整理工作');
     if (row.status !== 'failed') throw httpError(409, 'invalid_state', '只有失敗的工作可以重試');
-    if (row.failure_code === 'writeback_uncertain') throw httpError(409, 'writeback_uncertain', '無法確認先前的 Drive 寫入是否完成；已隔離，請先人工核對，勿重試或重送');
+    // Older Workers used these codes after PATCH too; matching metadata is not reconciliation.
+    if (['writeback_uncertain', 'writeback_failed', 'writeback_mismatch'].includes(row.failure_code)) throw httpError(409, 'writeback_uncertain', '無法確認先前的 Drive 寫入是否完成；已隔離，請先人工核對，勿重試或重送');
     if (!placeholderUnchanged(await driveMeta(session.user_id, row.result_file_id), row)) {
       const message = '結果占位檔已被改動或刪除，無法重試；請重新送出，或改用備用手動流程匯入';
       await db.prepare("UPDATE ai_jobs SET failure_code='placeholder_changed', failure_message=?, updated_at=? WHERE export_id=? AND status='failed'").bind(message, now(), exportId).run();
@@ -276,11 +277,16 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
       await startNext(job.user_id);
       throw httpError(422, code, error.message);
     }
-    // Keep a durable write reservation: an interrupted Drive write must not be retried blindly.
-    const locked = await db.prepare("UPDATE ai_jobs SET failure_code='writeback_in_progress', updated_at=? WHERE export_id=? AND user_id=? AND attempt_count=? AND status='running' AND failure_code IS NULL AND started_at>?")
-      .bind(now(), job.export_id, job.user_id, attempt, now() - RUNNING_TIMEOUT).run();
+    const expectedSha256 = await sha256Text(text);
+    const receipt = JSON.stringify({ sha256Base64Url: expectedSha256, beforeVersion: job.result_version, beforeMd5: job.result_md5 });
+    if (receipt.length > 240) throw httpError(422, 'recovery_metadata_invalid', '無法完整保存寫回核對資料；未開始寫入');
+    const recoveryMessage = phase => `Drive 寫回未確認（${phase}）；請人工核對。${receipt}`;
+    // Persist recovery evidence before PATCH, including when the Worker dies mid-write.
+    const locked = await db.prepare("UPDATE ai_jobs SET failure_code='writeback_in_progress', failure_message=?, updated_at=? WHERE export_id=? AND user_id=? AND attempt_count=? AND status='running' AND failure_code IS NULL AND started_at>?")
+      .bind(recoveryMessage('reserved'), now(), job.export_id, job.user_id, attempt, now() - RUNNING_TIMEOUT).run();
     if (!Number(locked.meta?.changes || 0)) throw httpError(409, 'submission_conflict', '工作已改變或正在寫回；未重複提交');
     let patchStarted = false;
+    let phase = 'patch';
     try {
       const placeholder = await driveMeta(job.user_id, job.result_file_id);
       if (!placeholderUnchanged(placeholder, job)) {
@@ -293,40 +299,39 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: text
       });
       if (!upload.ok) {
-        await markFailed(job.export_id, job.attempt_count, 'writeback_uncertain', 'Google Drive 寫回未確認；已隔離，請人工核對', true);
-        await startNext(job.user_id);
         throw httpError(502, 'writeback_uncertain', 'Google Drive 寫回未確認；已隔離，請人工核對');
       }
-      // Remember what we wrote so a later retry/resubmit of this job still
-      // recognises the placeholder as ours.
-      const written = await upload.json().catch(() => ({}));
+      phase = 'metadata';
+      const written = await upload.json();
+      if (written.id !== job.result_file_id || typeof written.version !== 'string' || !written.version || !/^[a-f0-9]{32}$/.test(written.md5Checksum || '')) {
+        throw httpError(502, 'writeback_uncertain', 'Drive 未回傳完整寫入 metadata；請人工核對');
+      }
+      // Keep acknowledged metadata; the durable receipt retains the pre-PATCH values.
       await db.prepare('UPDATE ai_jobs SET result_version=?, result_md5=?, updated_at=? WHERE export_id=? AND attempt_count=?')
-        .bind(written.version || null, written.md5Checksum || null, now(), job.export_id, job.attempt_count).run();
-      let readText = null;
-      try {
-        const readBack = await driveFetch({ user_id: job.user_id }, `${DRIVE_API}/files/${encodeURIComponent(job.result_file_id)}?alt=media`);
-        readText = readBack.ok ? await readBack.text() : null;
-      } catch {
-        await markFailed(job.export_id, job.attempt_count, 'writeback_failed', '寫回後無法讀回驗證，可重試', true);
-        await startNext(job.user_id);
-        throw httpError(502, 'writeback_failed', '寫回後無法讀回驗證，可重試');
+        .bind(written.version, written.md5Checksum, now(), job.export_id, job.attempt_count).run();
+      phase = 'readback';
+      const readBack = await driveFetch({ user_id: job.user_id }, `${DRIVE_API}/files/${encodeURIComponent(job.result_file_id)}?alt=media`);
+      if (!readBack.ok) throw httpError(502, 'writeback_uncertain', '寫回後無法讀回驗證；請人工核對');
+      const readText = await readBack.text();
+      if (await sha256Text(readText) !== expectedSha256) {
+        phase = 'sha_mismatch';
+        throw httpError(502, 'writeback_uncertain', '寫回後讀回的內容不一致；請人工核對');
       }
-      if (readText === null || await sha256Text(readText) !== await sha256Text(text)) {
-        await markFailed(job.export_id, job.attempt_count, 'writeback_mismatch', '寫回後讀回的內容不一致', true);
-        await startNext(job.user_id);
-        throw httpError(502, 'writeback_mismatch', '寫回後讀回的內容不一致');
-      }
+      phase = 'finalize';
       const finishedAt = now();
-      await db.prepare("UPDATE ai_jobs SET status='ready', failure_code=NULL, finished_at=?, updated_at=? WHERE export_id=? AND attempt_count=? AND status='running' AND failure_code='writeback_in_progress'")
+      await db.prepare("UPDATE ai_jobs SET status='ready', failure_code=NULL, failure_message=NULL, finished_at=?, updated_at=? WHERE export_id=? AND attempt_count=? AND status='running' AND failure_code='writeback_in_progress'")
         .bind(finishedAt, finishedAt, job.export_id, job.attempt_count).run();
       await startNext(job.user_id);
       return { job: publicJob(await jobRow(job.user_id, job.export_id)), items: checked.items.length };
     } catch (error) {
       if (patchStarted) {
-        const quarantined = await markFailed(job.export_id, attempt, 'writeback_uncertain', 'Drive 寫入結果未確認；已隔離，請人工核對', true);
-        if (Number(quarantined.meta?.changes || 0)) throw httpError(502, 'writeback_uncertain', 'Drive 寫入結果未確認；已隔離，請人工核對');
+        const quarantined = await markFailed(job.export_id, attempt, 'writeback_uncertain', recoveryMessage(phase), true);
+        if (Number(quarantined.meta?.changes || 0)) {
+          await startNext(job.user_id);
+          throw httpError(502, 'writeback_uncertain', `Drive 寫回未確認（${phase}）；已隔離，請人工核對`);
+        }
       } else {
-        await db.prepare("UPDATE ai_jobs SET failure_code=NULL WHERE export_id=? AND attempt_count=? AND status='running' AND failure_code='writeback_in_progress'").bind(job.export_id, attempt).run();
+        await db.prepare("UPDATE ai_jobs SET failure_code=NULL, failure_message=NULL WHERE export_id=? AND attempt_count=? AND status='running' AND failure_code='writeback_in_progress'").bind(job.export_id, attempt).run();
       }
       throw error;
     }

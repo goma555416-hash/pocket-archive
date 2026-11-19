@@ -34,4 +34,8 @@
 
 60 分鐘從 claim 計時，queued 等待不耗用時限。Cron 或下一個 agent API 請求會拒絕過期 attempt；App 重試回 queued，下一次 claim 才增加 attempt。
 
-`writeback_in_progress` 是既有欄位中的寫入鎖，status 仍為 running；另一份 submit、fail、cron 不可清除它。若 Worker 在寫回中被中止，鎖可能持續存在，必須人工核對。`writeback_uncertain` 是 failed 隔離狀態，App 重試會得到具體拒絕原因。禁止憑猜測清鎖或重送，復原見切換文件。
+`writeback_in_progress` 是既有欄位中的寫入鎖，status 仍為 running；另一份 submit、fail、cron 不可清除它。若 Worker 在寫回中被中止，鎖可能持續存在，必須人工核對。`writeback_uncertain` 是 failed 隔離狀態，App 重試會得到具體拒絕原因。PATCH 一旦開始，即使已回 200，只要 metadata／讀回／SHA 尚未確認就隔離；恢復連線不是重送許可。舊 `writeback_failed`／`writeback_mismatch` 也拒絕 retry。禁止猜測清鎖、fail、重送或另建同內容批次繞過隔離，復原見切換文件。
+
+確定 PATCH 前發生的暫時 metadata 讀取失敗才會釋放鎖，保留同 attempt；不可僅因看到 5xx 就假定未寫入。寫入不明時保留原 inbox／organized／evidence 與 binding，核對持久 recovery receipt，只有經授權的人工核對才能決定恢復。
+
+Windows 憑證實測見 [隔離驗收紀錄](WINDOWS-AGENT-ISOLATION.md)：仍未通過，不能用環境變數或同桌面身分 broker 替代。

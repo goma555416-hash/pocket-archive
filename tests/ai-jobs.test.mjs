@@ -328,6 +328,9 @@ test('an in-flight write cannot be failed, timed out or retried underneath the w
     fx.advance(61 * 60_000); await fx.cron();
     assert.equal(fx.row('export-agent').status, 'running');
     assert.equal(fx.row('export-agent').failure_code, 'writeback_in_progress');
+    const { createHash } = await import('node:crypto');
+    assert.ok(fx.row('export-agent').failure_message.includes(createHash('sha256').update(organized('export-agent')).digest('base64url')), 'crash recovery SHA must already be durable before PATCH finishes');
+    assert.ok(fx.row('export-agent').failure_message.includes('"beforeVersion":"1"'));
     assert.equal((await fx.session('/api/ai/jobs/export-agent/retry', 'POST', {})).status, 409);
     assert.equal((await fx.agent(token, '/api/ai/agent/claim', 'POST')).status, 409);
   } finally { release(); }
@@ -393,7 +396,7 @@ test('writeback mismatch fails job', { skip }, async () => {
   const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
   assert.equal(response.status, 502);
   assert.equal(fx.row('export-agent').status, 'failed');
-  assert.equal(fx.row('export-agent').failure_code, 'writeback_mismatch');
+  assert.equal(fx.row('export-agent').failure_code, 'writeback_uncertain');
 });
 
 test('stale attempt is rejected', { skip }, async () => {
@@ -436,19 +439,61 @@ test('agent cannot touch other users or non-running jobs', { skip }, async () =>
   assert.equal((await notRunning.json()).error.code, 'invalid_state');
 });
 
-test('write-back mismatch stays recoverable by retry and resubmit', { skip }, async () => {
+for (const fault of ['exception', 'http', 'mismatch', 'metadata']) test(`PATCH success followed by ${fault} stays quarantined with recovery evidence`, { skip }, async () => {
+  const fx = await aiFixture({ dispatchMode: 'poll' });
+  const { token, payload } = await runningJob(fx);
+  await fx.agent(token, '/api/ai/agent/claim', 'POST');
+  const before = fx.row('export-agent');
+  const realFetch = fx.env.__fetch;
+  fx.env.__fetch = async (input, options) => {
+    const response = await realFetch(input, options);
+    if (fault === 'metadata' && options?.method === 'PATCH') return Response.json({});
+    if (String(input).includes(`/files/${payload.resultFileId}?alt=media`)) {
+      if (fault === 'exception') throw new Error('read failed');
+      if (fault === 'http') return new Response('', { status: 503 });
+      if (fault === 'mismatch') return new Response('{"changed":true}');
+    }
+    return response;
+  };
+  const result = organized('export-agent');
+  const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', result);
+  assert.equal(response.status, 502);
+  assert.equal((await response.json()).error.code, 'writeback_uncertain');
+  const quarantined = fx.row('export-agent');
+  assert.equal(quarantined.failure_code, 'writeback_uncertain');
+  assert.equal(quarantined.attempt_count, before.attempt_count);
+  assert.equal(quarantined.result_file_id, before.result_file_id);
+  assert.equal(quarantined.inbox_sha256, before.inbox_sha256);
+  assert.equal(quarantined.pending_sha256, before.pending_sha256);
+  assert.equal(quarantined.result_version, fault === 'metadata' ? before.result_version : '2');
+  assert.ok(quarantined.failure_message.includes(before.result_md5));
+  const { createHash } = await import('node:crypto');
+  assert.ok(quarantined.failure_message.includes(createHash('sha256').update(result).digest('base64url')));
+  fx.env.__fetch = realFetch; // restoration of connectivity is not human reconciliation
+  for (let index = 0; index < 2; index += 1) {
+    const retry = await fx.session('/api/ai/jobs/export-agent/retry', 'POST', {});
+    assert.equal(retry.status, 409);
+    assert.equal((await retry.json()).error.code, 'writeback_uncertain');
+    assert.equal((await fx.agent(token, '/api/ai/agent/claim', 'POST')).status, 204);
+    assert.equal((await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', result)).status, 409);
+  }
+  fx.advance(61 * 60_000); await fx.cron();
+  assert.deepEqual(fx.row('export-agent'), quarantined);
+  assert.equal(fx.uploads.length, 1);
+});
+
+test('legacy writeback failure codes cannot be retried even with matching Drive metadata', { skip }, async () => {
   const fx = await aiFixture();
-  const { token } = await runningJob(fx);
-  fx.setReadBack('{"tampered":true}');
-  await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
-  assert.equal(fx.row('export-agent').failure_code, 'writeback_mismatch');
-  fx.setReadBack(null);
-  const retried = await (await fx.session('/api/ai/jobs/export-agent/retry', 'POST', {})).json();
-  assert.equal(retried.job.status, 'running');
-  assert.equal(retried.job.attempt, 2);
-  const resubmit = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=2', 'PUT', organized('export-agent'));
-  assert.equal(resubmit.status, 200);
-  assert.equal(fx.row('export-agent').status, 'ready');
+  await runningJob(fx);
+  for (const code of ['writeback_failed', 'writeback_mismatch', 'writeback_uncertain']) {
+    fx.db.database.prepare("UPDATE ai_jobs SET status='failed', failure_code=? WHERE export_id='export-agent'").run(code);
+    const before = fx.row('export-agent');
+    const response = await fx.session('/api/ai/jobs/export-agent/retry', 'POST', {});
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).error.code, 'writeback_uncertain');
+    assert.deepEqual(fx.row('export-agent'), before);
+  }
+  assert.equal(fx.fires.length, 1);
 });
 
 test('read-back exception marks the job failed instead of leaving it running', { skip }, async () => {
@@ -458,7 +503,7 @@ test('read-back exception marks the job failed instead of leaving it running', {
   const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
   assert.equal(response.status, 502);
   assert.equal(fx.row('export-agent').status, 'failed');
-  assert.equal(fx.row('export-agent').failure_code, 'writeback_failed');
+  assert.equal(fx.row('export-agent').failure_code, 'writeback_uncertain');
 });
 
 test('retry checks the placeholder first and does not fire when it changed', { skip }, async () => {
@@ -483,4 +528,9 @@ test('transient Drive errors are not reported as placeholder changes', { skip },
   assert.equal(response.status, 503);
   assert.equal(fx.row('export-agent').status, 'running');
   assert.equal(fx.uploads.length, 0);
+  assert.equal(fx.row('export-agent').failure_message, null);
+  fx.env.__fetch = realFetch;
+  const resumed = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
+  assert.equal(resumed.status, 200, 'pre-PATCH failure may resume the same attempt safely');
+  assert.equal(fx.uploads.length, 1);
 });

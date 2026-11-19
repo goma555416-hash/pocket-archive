@@ -181,6 +181,28 @@ for (const dispatchMode of ['routine', 'poll']) test(`${dispatchMode} organize p
     assert.equal(applied.applied, 2);
     const course = applied.entries.find(entry => entry.id === byName.courseHome.id);
     assert.ok(course.tags.includes('日語學習'), 'the tag reaches the collection');
+
+    // A completed PATCH with unverified read-back must never enter the retry queue.
+    for (const [index, fault] of ['THROW', '{"mismatch":true}'].entries()) {
+      const failedId = `export-flow-quarantine-${index}`;
+      const batch = fx.seedBatch(failedId, { itemIds: entries.map(e => e.entry.id), inboxContent: JSON.stringify(createInboxEnvelope(entries.map(e => e.entry), failedId)) });
+      assert.equal((await fx.session('/api/ai/jobs', 'POST', batch)).status, 201);
+      if (dispatchMode === 'poll') await node([script('routine-agent.mjs'), 'claim']);
+      await writeFile(organizedPath, JSON.stringify({ ...organized, source_export_id: failedId }));
+      fx.setReadBack(fault);
+      await assert.rejects(node([script('routine-agent.mjs'), 'submit', failedId, '1', organizedPath]));
+      const written = fx.uploads.length;
+      const quarantined = fx.row(failedId);
+      fx.setReadBack(null);
+      for (let retry = 0; retry < 2; retry += 1) {
+        const response = await fx.session(`/api/ai/jobs/${failedId}/retry`, 'POST', {});
+        assert.equal(response.status, 409, 'read-back failure cannot authorize a second PATCH');
+        assert.equal((await response.json()).error.code, 'writeback_uncertain');
+      }
+      await assert.rejects(node([script('routine-agent.mjs'), 'submit', failedId, '1', organizedPath]));
+      assert.deepEqual(fx.row(failedId), quarantined);
+      assert.equal(fx.uploads.length, written);
+    }
   } finally {
     for (const server of servers) server.close();
     await rm(dir, { recursive: true, force: true });
