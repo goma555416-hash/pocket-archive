@@ -11,6 +11,23 @@ const env = { PA_AGENT_TOKEN: TOKEN, PA_BACKEND_ORIGIN: 'https://backend.example
 const sink = () => { const lines = []; return { lines, write: text => { lines.push(String(text)); } }; };
 const sha = text => createHash('sha256').update(text).digest('hex');
 
+test('claim prints only a validated binding or null and preserves errors', async () => {
+  for (const job of [null, { exportId: 'export-claim', attempt: 2, private: 'must not print' }]) {
+    const out = sink();
+    const fetchImpl = async (url, init) => {
+      assert.equal(url, 'https://backend.example/api/ai/agent/claim');
+      assert.equal(init.method, 'POST');
+      return job ? Response.json({ job }) : new Response(null, { status: 204 });
+    };
+    assert.equal(await runAgentCommand(['claim'], { env, fetchImpl, stdout: out, stderr: sink() }), 0);
+    assert.deepEqual(JSON.parse(out.lines.join('')), { job: job ? { exportId: job.exportId, attempt: job.attempt } : null });
+  }
+  for (const response of [Response.json({ error: { code: 'agent_busy' } }, { status: 409 }), Response.json({ job: { exportId: '../../bad', attempt: 1 } })]) {
+    assert.equal(await runAgentCommand(['claim'], { env, fetchImpl: async () => response, stdout: sink(), stderr: sink() }), 1);
+  }
+  assert.equal(await runAgentCommand(['claim', 'ignored'], { env, fetchImpl: () => assert.fail('must not send'), stdout: sink(), stderr: sink() }), 2);
+});
+
 test('inbox verifies SHA-256 and deletes the file on mismatch', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'pa-agent-'));
   const content = '{"format":"pocket-archive-inbox"}';

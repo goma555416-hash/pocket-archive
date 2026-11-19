@@ -24,7 +24,7 @@ export const FIRE_URL = 'https://api.anthropic.com/v1/claude_code/routines/trig_
 export const md5 = text => createHash('md5').update(text).digest('hex');
 export const sha = text => createHash('sha256').update(text).digest('hex');
 
-export async function aiFixture({ configured = true } = {}) {
+export async function aiFixture({ configured = true, dispatchMode } = {}) {
   let schema = '';
   for (const name of ['0001_auth', '0002_capture', '0003_owner_session_security', '0004_capture_images', '0005_ai_jobs']) {
     schema += `${await readFile(new URL(`../../worker/migrations/${name}.sql`, import.meta.url), 'utf8')}\n`;
@@ -35,6 +35,7 @@ export async function aiFixture({ configured = true } = {}) {
     DB: db, APP_ORIGIN: 'https://app.example', GOOGLE_CLIENT_ID: 'client', GOOGLE_CLIENT_SECRET: 'secret',
     OWNER_GOOGLE_SUB: '100000000000000000001', TOKEN_ENCRYPTION_KEY: bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32))), TOKEN_ENCRYPTION_KEY_VERSION: '1',
     __now: () => clock,
+    AI_DISPATCH_MODE: dispatchMode,
     ...(configured ? { AI_ROUTINE_FIRE_URL: FIRE_URL, AI_ROUTINE_FIRE_TOKEN: 'routine-secret-token' } : {})
   };
   for (const [id, sub] of [['user-1', '100000000000000000001'], ['user-2', '100000000000000000002']]) {

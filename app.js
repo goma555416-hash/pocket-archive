@@ -517,8 +517,8 @@ function showSuggestionPreview(result) {
     const verified = ['content_read', 'image_read'].includes(evidence.status);
     const defaultChecked = verified && item.analysisStatus === 'completed' ? ' checked' : '';
     const evidenceText = contentEvidenceLabel(evidence.status, evidence.kind);
-    const sourceText = evidence.excerpt ? `<small>Claude 提供的內容證據：${escapeHtml(evidence.excerpt.slice(0, 400))}</small>` : '';
-    return `<li><label><input type="checkbox" data-suggestion-id="${escapeHtml(item.id)}"${defaultChecked} /><span><b>${escapeHtml(entry.title)}</b><small>現有標籤：${escapeHtml(entry.tags.join('、') || '無')} → 新增：${escapeHtml(added.join('、') || '無')} · ${item.analysisStatus === 'insufficient_data' ? '資料不足' : '已分析'} · 信心 ${escapeHtml(item.confidence)}</small><small>${escapeHtml(evidenceText)}（證據由 Claude 回報，App 不會自行重新爬取驗證）</small>${sourceText}${merged.pending.length ? `<small class="error-note">超過上限，保留於 AI 建議、不加入標籤：${escapeHtml(merged.pending.join('、'))}</small>` : ''}<em>${escapeHtml(item.summary || item.reason || '無摘要')}</em></span></label></li>`;
+    const sourceText = evidence.excerpt ? `<small>AI 提供的內容證據：${escapeHtml(evidence.excerpt.slice(0, 400))}</small>` : '';
+    return `<li><label><input type="checkbox" data-suggestion-id="${escapeHtml(item.id)}"${defaultChecked} /><span><b>${escapeHtml(entry.title)}</b><small>現有標籤：${escapeHtml(entry.tags.join('、') || '無')} → 新增：${escapeHtml(added.join('、') || '無')} · ${item.analysisStatus === 'insufficient_data' ? '資料不足' : '已分析'} · 信心 ${escapeHtml(item.confidence)}</small><small>${escapeHtml(evidenceText)}（證據由 AI 回報，App 不會自行重新爬取驗證）</small>${sourceText}${merged.pending.length ? `<small class="error-note">超過上限，保留於 AI 建議、不加入標籤：${escapeHtml(merged.pending.join('、'))}</small>` : ''}<em>${escapeHtml(item.summary || item.reason || '無摘要')}</em></span></label></li>`;
   }).join('')}</ul>${rejected.length ? `<p class="error-note">${rejected.length} 筆因未知 ID 或欄位錯誤不會套用。</p>` : ''}`;
   $('#apply-ai').hidden = accepted.length === 0;
 }
@@ -1052,7 +1052,7 @@ function renderAiStatus() {
   if (aiButton) aiButton.setAttribute('aria-label', ready ? 'AI 整理（有結果）' : 'AI 整理');
   if (!state.backendSession) { statusLine.dataset.tone = 'idle'; statusLine.textContent = '雲端整理需要登入 Pocket Archive 後端；仍可使用下方備用手動流程。'; return; }
   const configuredNote = $('#cloud-ai-configured');
-  if (configuredNote) configuredNote.textContent = state.aiConfigured === false ? '後端尚未設定 Claude 雲端任務觸發（AI_ROUTINE_FIRE_URL／AI_ROUTINE_FIRE_TOKEN）。' : state.aiConfigured ? '後端已設定 Claude 雲端任務觸發。' : '正在確認雲端整理設定…';
+  if (configuredNote) configuredNote.textContent = state.aiConfigured === false ? '後端尚未設定整理執行端。' : state.aiConfigured ? '後端已設定整理執行端；送出後請查看排隊或整理狀態。' : '正在確認雲端整理設定…';
   if (state.aiConfigured === false) { statusLine.dataset.tone = 'idle'; statusLine.textContent = '雲端整理尚未設定；請依 CLOUD-AI-SETUP.md 完成設定，或使用下方備用手動流程。'; return; }
   statusLine.dataset.tone = view.tone;
   statusLine.textContent = job ? `${view.label}　${view.detail}` : '選取項目後按「送出整理」；未選取時送出全部待整理收藏。';
@@ -1115,7 +1115,7 @@ async function enqueueCloudAi() {
       itemIds: job.itemIds, inboxSha256: evidence.inboxSha256, pendingSha256: evidence.pendingSha256, deviceId: state.deviceId
     });
     state.aiJobs = [created.job, ...state.aiJobs.filter(item => item.exportId !== created.job.exportId)];
-    toast(created.duplicate ? '相同批次已送出，未重複建立' : `已送出 ${chosen.length} 筆，Claude 會在雲端整理 ✓`);
+    toast(created.duplicate ? '相同批次已送出，未重複建立' : `已送出 ${chosen.length} 筆，等待整理執行端接手`);
   } catch (error) { toast(`送出整理失敗：${error.message}`, 8500); }
   finally { state.cloudBusy = false; renderCloudStatus(); renderAiStatus(); }
   refreshAiJobs({ loadResult: false });

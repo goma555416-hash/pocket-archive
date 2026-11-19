@@ -106,11 +106,11 @@ export function validateContentEvidence(raw, entry, suggestion) {
 }
 
 export function contentEvidenceLabel(status, kind = '') {
-  if (status === 'content_read' && kind === 'web_pages') return 'Claude 回報：已讀取網站頁面內容';
-  if (status === 'content_read' && kind === 'site_description') return 'Claude 回報：只讀到網站自我描述，信心較低';
+  if (status === 'content_read' && kind === 'web_pages') return 'AI 回報：已讀取網站頁面內容';
+  if (status === 'content_read' && kind === 'site_description') return 'AI 回報：只讀到網站自我描述，信心較低';
   return {
-    content_read: 'Claude 回報：已讀取文字內容',
-    image_read: 'Claude 回報：已檢視圖片',
+    content_read: 'AI 回報：已讀取文字內容',
+    image_read: 'AI 回報：已檢視圖片',
     metadata_only: '只有標題／中繼資料',
     blocked: '讀取遭阻擋',
     auth_required: '需登入，無法讀取',

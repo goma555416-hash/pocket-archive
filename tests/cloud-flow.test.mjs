@@ -56,7 +56,7 @@ function standInClassify(evidence) {
     : { analysis_status: 'insufficient_data', suggested_tags: [], suggested_categories: [], summary: '', reason: evidence.reason || '資料不足', confidence: 'low', evidence: read ? { status: 'metadata_only', kind: 'metadata', excerpt: '', source_url: evidence.source_url, observed_at: evidence.observed_at } : evidence };
 }
 
-test('cloud organize pipeline works end to end through the sandbox proxy and lands in the App (stand-in classifier, not Claude)', { skip, timeout: 120000 }, async () => {
+for (const dispatchMode of ['routine', 'poll']) test(`${dispatchMode} organize pipeline works end to end through the sandbox proxy and lands in the App (stand-in classifier, not Claude)`, { skip, timeout: 120000 }, async () => {
   assert.deepEqual(missing, [], `必要工具缺少：${missing.join('、')}`);
   const dir = await mkdtemp(join(tmpdir(), 'pa-flow-'));
   const servers = [];
@@ -68,7 +68,7 @@ test('cloud organize pipeline works end to end through the sandbox proxy and lan
     assert.equal(made.status, 0, made.stderr);
 
     // 2. Worker (in-memory D1 + fake Drive) with one running job.
-    const fx = await aiFixture();
+    const fx = await aiFixture({ dispatchMode });
     const token = await fx.newAgentToken();
     const entries = Object.entries(FIXTURE_URLS).map(([name, url]) => ({ name, entry: createEntry({ url, title: name, note: '' }) }));
     const exportId = 'export-flow-1';
@@ -115,6 +115,16 @@ test('cloud organize pipeline works end to end through the sandbox proxy and lan
     const node = (args, opts = {}) => run(process.execPath, args, { cwd: dir, env, timeout: 60000, ...opts });
 
     // 5. The routine's own steps, as CLAUDE-ROUTINE.md runs them.
+    if (dispatchMode === 'poll') {
+      assert.equal(fx.row(exportId).status, 'queued');
+      assert.equal(fx.row(exportId).attempt_count, 0);
+      assert.equal(fx.fires.length, 0);
+      const claims = await Promise.allSettled([0, 1].map(() => node([script('routine-agent.mjs'), 'claim'])));
+      assert.equal(claims.filter(r => r.status === 'fulfilled').length, 1, 'two CLI agents cannot acquire the same job');
+      const claimed = JSON.parse(claims.find(r => r.status === 'fulfilled').value.stdout);
+      assert.deepEqual(claimed, { job: { exportId, attempt: 1 } });
+      assert.match(claims.find(r => r.status === 'rejected').reason.stderr, /agent_busy/);
+    }
     const job = JSON.parse((await node([script('routine-agent.mjs'), 'job', exportId, '1'])).stdout);
     assert.ok(job.evidenceKinds.includes('web_pages'), 'Worker advertises the new evidence kinds');
     const inboxPath = join(dir, 'inbox.json');
@@ -127,8 +137,9 @@ test('cloud organize pipeline works end to end through the sandbox proxy and lan
     const organizedPath = join(dir, 'organized.json');
     await writeFile(organizedPath, JSON.stringify(organized));
     await node([script('validate-organized.mjs'), organizedPath, inboxPath, '--require-evidence']);
-    const submitted = await node([script('routine-agent.mjs'), 'submit', exportId, '1', organizedPath]);
-    assert.match(submitted.stdout, /ready/);
+    const submissions = await Promise.allSettled([0, 1].map(() => node([script('routine-agent.mjs'), 'submit', exportId, '1', organizedPath])));
+    assert.equal(submissions.filter(r => r.status === 'fulfilled').length, 1, 'only one concurrent submit may write');
+    assert.match(submissions.find(r => r.status === 'fulfilled').value.stdout, /ready/);
 
     // 6. Transport really went through the proxy, with no client-side secret.
     assert.ok(tunnels.includes(BACKEND_HOST) && tunnels.includes('course.pa-fixture.org'), `tunnels: ${tunnels.join(',')}`);
@@ -138,6 +149,10 @@ test('cloud organize pipeline works end to end through the sandbox proxy and lan
     assert.equal(fx.row(exportId).status, 'ready');
     assert.equal(fx.uploads.length, 1);
     assert.equal(fx.uploads[0].id, payload.resultFileId);
+    if (dispatchMode === 'poll') {
+      assert.deepEqual(JSON.parse((await node([script('routine-agent.mjs'), 'claim'])).stdout), { job: null });
+      assert.equal(fx.fires.length, 0);
+    }
     const app = readOrganized(fx.uploads[0].text, { exportIds: [exportId], entries: entries.map(e => e.entry) });
     assert.equal(app.rejected.length, 0, JSON.stringify(app.rejected));
     const byName = Object.fromEntries(entries.map(({ name, entry }) => [name, app.accepted.find(item => item.id === entry.id)]));
