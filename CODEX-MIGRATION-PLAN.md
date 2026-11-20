@@ -1,5 +1,7 @@
 # Windows Codex 回遷：v2.6.0 工程與切換紀錄
 
+後續自動 Runner／獨立服務 Broker 實作、隔離驗收與管理員操作見 [Windows Runner](WINDOWS-RUNNER.md)。既有寫回與隔離門檻繼續適用。
+
 日期：2026-11-19；安全修正與 Windows 實測追加於 2026-11-20（Asia/Taipei）。這是可審查的工程候選版，**不是遷移完成或生產切換成功**。本輪未部署 Worker、未變更生產 vars、未停用 Claude Routine、未建立／撤銷生產憑證，沒有讀取私人收藏。
 
 ## 已核對的起點
