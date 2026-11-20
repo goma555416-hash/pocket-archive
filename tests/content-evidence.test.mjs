@@ -126,7 +126,7 @@ test('an App left open on an older version still accepts evidence kinds added la
  const result=parse(row(future));
  assert.equal(result.accepted.length,1,'future text kind with a real excerpt is accepted by the App');
  assert.equal(result.accepted[0].evidence.status,'content_read');
- assert.match(contentEvidenceLabel('content_read','page_bundle_v9'),/Claude 回報/);
+ assert.match(contentEvidenceLabel('content_read','page_bundle_v9'),/AI 回報/);
  assert.equal(parse(row(e('content_read','page_bundle_v9','too short'))).accepted.length,0,'still needs a real excerpt');
  assert.equal(parse(row(e('content_read','metadata',text))).accepted.length,0,'reserved kinds are not text');
  assert.throws(()=>validateEvidenceShape(future,{analysis_status:'completed',confidence:'medium'}),/類別無效/,'the Worker (always current) stays strict');

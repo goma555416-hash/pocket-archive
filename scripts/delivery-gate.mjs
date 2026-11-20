@@ -32,6 +32,7 @@ function runStep(name, args, env = {}) {
 
 const testFiles = readdirSync('tests').filter(name => name.endsWith('.test.mjs')).map(name => `tests/${name}`);
 const steps = [
+  ...(process.platform === 'win32' ? [await runStep('Windows Runner／Broker 隔離假後端', ['tests/windows-runner.mjs'])] : []),
   await runStep('單元／整合測試', ['--test', ...testFiles.filter(f => !f.endsWith('cloud-flow.test.mjs'))]),
   await runStep('核心流程：雲端整理管線（模擬沙盒代理；分類為固定規則模擬）', ['--test', 'tests/cloud-flow.test.mjs'], { PA_REQUIRE_FLOW: '1' }),
   await runStep('靜態資源檢查', ['scripts/validate-static-assets.mjs']),

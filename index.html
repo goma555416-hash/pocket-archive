@@ -28,7 +28,7 @@
         <button class="nav-button" data-view="archived" type="button"><span>▤</span> 已封存 <b id="nav-count-archived">0</b></button>
         <button class="nav-button" data-view="all" type="button"><span>▦</span> 全部收藏 <b id="nav-count-all">0</b></button>
       </nav>
-      <div class="side-bottom"><p>收藏值得留下的，<br />其他的慢慢整理。</p><span class="version">LOCAL FIRST · V2.5.3</span></div>
+      <div class="side-bottom"><p>收藏值得留下的，<br />其他的慢慢整理。</p><span class="version">LOCAL FIRST · V2.6.0</span></div>
     </aside>
 
     <div class="workspace">
@@ -191,7 +191,7 @@
 
   <dialog id="ai-dialog" aria-labelledby="ai-heading" class="wide-dialog">
     <div class="entry-form"><div class="modal-heading"><div><div class="eyebrow subtle">AI ON DEMAND</div><h2 id="ai-heading">AI 整理</h2></div><button type="button" data-close="ai-dialog" class="icon-button" aria-label="關閉">✕</button></div>
-      <p id="ai-selection-note" class="privacy-note">選取卡片後送出；未選取時送出全部待整理收藏。Claude 會在雲端逐筆讀取內容後提出標籤建議，你看過勾選後才會套用。</p>
+      <p id="ai-selection-note" class="privacy-note">選取卡片後送出；未選取時送出全部待整理收藏。整理執行端接手後會逐筆讀取內容、提出標籤建議，你看過勾選後才會套用。本機模式需 Windows 執行端開啟；未接手時會保持排隊。</p>
       <div class="action-stack horizontal"><button id="ai-cloud-export" type="button" class="button primary" disabled>送出整理</button><button id="ai-retry" type="button" class="button outline" hidden>重試</button></div>
       <p id="ai-cloud-status" class="ai-status" role="status" aria-live="polite"></p>
       <div id="ai-preview" class="preview-panel" aria-live="polite"></div>
