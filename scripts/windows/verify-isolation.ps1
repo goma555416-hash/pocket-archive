@@ -24,7 +24,7 @@ foreach($name in @('agent.secret','origin.txt','runner.sid','Broker.exe')){
         finally{if($handle){$handle.Dispose()}}
     }
 }
-foreach($access in @(0x10,0x20,0x8,0x40)){
+foreach($access in @(0x10,0x20,0x8,0x40,0x2,0x40000,0x80000,0x1,0x800)){
     $handle=[IsolationProbe]::OpenProcess($access,$false,$BrokerPid)
     if($handle -ne [IntPtr]::Zero){
         $null=[IsolationProbe]::CloseHandle($handle)

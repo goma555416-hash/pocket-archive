@@ -1,6 +1,6 @@
 # Windows 自動 Runner 與 Broker 候選版
 
-此階段延續 Draft PR #34。安裝尚未執行，獨立服務身分的安全條件仍待驗收。適用隔離 HTTPS 後端；程式拒絕目前正式 Worker hostname。
+此階段延續 Draft PR #34。ProbeOnly 服務已由使用者安裝並啟動；最新實測見 [Windows ProbeOnly 驗收紀錄](WINDOWS-PROBE-ACCEPTANCE.md)。適用隔離 HTTPS 後端；程式拒絕目前正式 Worker hostname。
 
 ## 執行架構
 
@@ -15,7 +15,7 @@
 
 ## 安全邊界
 
-Broker 使用固定操作與後端，HTTP redirect、proxy 與 cookie 停用。IPC 拒絕網路客戶端，DACL 只授予指定桌面 SID data read/write/read-control/synchronize，沒有 create-instance。Runner 核對 pipe owner 必須是服務 SID，防止接受冒名服務。
+Broker 使用固定操作與後端，HTTP redirect、proxy 與 cookie 停用。IPC 拒絕網路客戶端，DACL 只授予指定桌面 SID data read/write/read-attributes/read-control/synchronize，沒有 create-instance。Runner 核對 pipe owner 必須是服務 SID，防止接受冒名服務。ReadAttributes 是 Windows CreateFile 額外要求的權限；未授予時一般桌面也無法連線。
 
 Program Files 安裝目錄取消繼承，SYSTEM／Administrators 完整權限，服務 SID 僅 RX，所有者強制 SYSTEM。這避免建立目錄的桌面使用者以 owner 權限改回 ACL。服務程序 DACL 也限制為服務 SID／SYSTEM／Administrators。服務設定與啟停權限限制 SYSTEM／Administrators，服務 privilege 清單僅 SeChangeNotifyPrivilege。
 
@@ -23,7 +23,7 @@ Program Files 安裝目錄取消繼承，SYSTEM／Administrators 完整權限，
 
 已編譯服務與 Runner。fixture build 使用編譯期 FIXTURE 才有 loopback HTTP 與固定假 credential。正式 service build 必須以指定服務 SID 執行。fixture 的同 SID 通訊成功不證明跨身分安全。
 
-尚待服務安裝後測試的條件包括實際服務 SID、Program Files 與 executable ACL、預設及沙盒外桌面身分均無法讀取 token／程序記憶體、IPC owner／遠端拒絕、服務重啟、開機／登入排程、Codex 異常退出子程序清理。未通過前不得置入生產憑證。
+實際服務 SID、Program Files owner／ACL、兩個身分的檔案／程序權限拒絕、桌面 IPC owner／PID、服務更新重啟、Limited 排程執行已通過 ProbeOnly 實測。強制停止／executor 逾時或失敗的子孫程序回收已通過原生 fixture。遠端身分拒絕、真開機／登入觸發及實際 Codex 子程序在排程下的回收仍待驗；不得置入生產憑證。
 
 參考 [Microsoft service accounts](https://learn.microsoft.com/windows/security/identity-protection/access-control/service-accounts) 與 [named-pipe security](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights)。
 
@@ -54,6 +54,17 @@ Install 建立服務但保持 disabled。它寫入 Program Files、服務註冊�
 
     .\scripts\windows\verify-isolation.ps1 -BrokerPid PID
 
+一般桌面另執行以下 probe。IPC 只送會被拒絕的 opcode 0，不會領單；排程 probe 使用暫時的 Limited interactive task，執行相同檔案／程序／IPC 探針後自動移除。它不證明真登出登入或開機觸發。
+
+    .\scripts\windows\probe-ipc.ps1 -ExpectedPid PID
+    .\scripts\windows\probe-schedule.ps1 -ExpectedPid PID
+
+已安裝本版之前的 ProbeOnly 候選版時，先一般桌面 Build，再由管理員執行以下更新。腳本核對服務身分／路徑／Manual 模式、固定 .invalid origin 與假憑證；短暫停止後備份舊 executable、替換並比對 hash、設 SYSTEM owner、重啟。它不改憑證／origin／SCM DACL。中途失敗可能保持停止，勿跳過檢查重複覆寫。
+
+    .\scripts\windows\manage.ps1 UpdateProbe
+
+更新回滾由管理員停止服務，將受保護的 `C:\Program Files\PocketArchiveBroker\Broker.previous.exe` 複製回同目錄 `Broker.exe`、確認 owner 仍為 SYSTEM，再啟動。舊版有桌面 IPC 權限缺漏，回滾後須保持 ProbeOnly，不得連真後端。解除安裝仍使用下方 Uninstall。
+
 只有兩個身分的檔案／程序拒絕及 IPC／服務驗收完成後，管理員設定開機啟動。一般桌面設定登入 Runner。
 
     sc.exe config PocketArchiveBroker start= delayed-auto
@@ -77,10 +88,13 @@ fixture 測試另確認第二個同名 broker 無法啟動、第二個 Runner �
 
 2026-11-21 重啟測試曾因只等待 exitCode 而逾時。補上 signalCode 結束條件後，原生流程已通過 Broker／Runner 重啟及 ready 工作不重送斷言；此失敗與修正未涉及 Worker 或資料驗證規則。
 
-本機完整驗收已取得 AUTOMATED，229 項單元／整合、2 條核心流程、Windows 原生流程、靜態資源與瀏覽器 E2E 均通過。追加的重啟斷言要求已 ready 的工作在 Broker／Runner 重啟後保持一次寫回，推送前會再次執行最終 gate。強制中止時 Codex 孫程序的完整回收仍需服務／排程環境驗證，無法確認前應人工核對相關程序與 running 工作。
+上一版 commit 41f4bd0 完整驗收為 AUTOMATED。2026-11-22 新增最小權限 IPC 回歸，以及 Runner 強制終止／逾時／executor 失敗的子孫程序回收回歸。Runner 在啟動 executor 前加入不可 breakaway 的 Job Object；停止 Runner 時 OS 關閉唯一 handle 並回收整棵一般子程序樹。executor 逾時／失敗會退出 Runner（code 4），避免留孤兒程序；排程可按既有設定重新啟動，新 claim 不重送 running 工作。這不是對同 SID 惡意程序經其他系統服務建立程序的隔離承諾。[Microsoft Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
+
+本輪 sandbox 完整 verify 的核心流程受到 Schannel SEC_E_NO_CREDENTIALS、資源測試受到 .agents 寫入 ACL 阻擋，其餘 229 項、原生測試與 E2E 通過。該次結果是 BLOCKED；一般桌面對最終內容的完整 gate 結果另記於 PR，不沿用上一版 AUTOMATED。
 
     node --test tests/runner.test.mjs
     node tests/windows-runner.mjs
+    node tests/windows-runner-lifecycle.mjs
     node tests/windows-runner.mjs --codex
     npm run verify
 

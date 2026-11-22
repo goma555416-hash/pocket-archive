@@ -4,7 +4,40 @@ using System.IO.Pipes;
 using System.Diagnostics;
 using System.Security.Principal;
 using System.Threading;
+using System.Runtime.InteropServices;
 class Runner {
+    [StructLayout(LayoutKind.Sequential)]
+    struct BasicLimits {
+        public long processTime, jobTime;
+        public uint flags;
+        public UIntPtr minimumWorkingSet, maximumWorkingSet;
+        public uint activeProcesses;
+        public UIntPtr affinity;
+        public uint priority, scheduling;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct ExtendedLimits {
+        public BasicLimits basic;
+        public ulong readOperations, writeOperations, otherOperations, readBytes, writeBytes, otherBytes;
+        public UIntPtr processMemory, jobMemory, peakProcessMemory, peakJobMemory;
+    }
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    static extern bool SetInformationJobObject(IntPtr job, int info, ref ExtendedLimits limits, uint size);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+    static IntPtr lifetimeJob;
+    static void BindProcessLifetime() {
+        lifetimeJob=CreateJobObject(IntPtr.Zero,null);
+        var limits=new ExtendedLimits();
+        limits.basic.flags=0x2000; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if(lifetimeJob==IntPtr.Zero ||
+            !SetInformationJobObject(lifetimeJob,9,ref limits,(uint)Marshal.SizeOf(typeof(ExtendedLimits))) ||
+            !AssignProcessToJobObject(lifetimeJob,new IntPtr(-1)))
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        // Bind before spawning; only this process owns the non-inherited handle, closed by Windows on exit.
+    }
     static byte[] Read(Stream stream,int size) {
         var bytes=new byte[size];
         for(int offset=0;offset<size;) {
@@ -28,6 +61,7 @@ class Runner {
         bool created;
         using(var mutex=new Mutex(true,@"Local\PocketArchiveRunner",out created)) {
             if(!created) return 3;
+            BindProcessLifetime();
             Console.WriteLine("runner-started");
             string root=Path.GetFullPath(args[0]);
             var stop=Path.Combine(root,"private-data","runner.stop");
@@ -35,7 +69,7 @@ class Runner {
             while(!File.Exists(stop)) {
                 try {
                     using(var pipe=new NamedPipeClientStream(".",args[2],
-                        PipeAccessRights.ReadData|PipeAccessRights.WriteData|PipeAccessRights.ReadPermissions,
+                        PipeAccessRights.ReadData|PipeAccessRights.WriteData|PipeAccessRights.ReadAttributes|PipeAccessRights.ReadPermissions,
                         PipeOptions.None,TokenImpersonationLevel.Anonymous,HandleInheritability.None)) {
                         pipe.Connect(5000);
                         var owner=(SecurityIdentifier)pipe.GetAccessControl().GetOwner(typeof(SecurityIdentifier));
@@ -59,8 +93,14 @@ class Runner {
                         foreach(string key in new[]{"PA_AGENT_TOKEN","HTTPS_PROXY","HTTP_PROXY","ALL_PROXY"})
                             start.EnvironmentVariables.Remove(key);
                         using(var child=Process.Start(start)) {
-                            if(!child.WaitForExit(45*60*1000)) { child.Kill(); throw new TimeoutException(); }
-                            if(child.ExitCode!=0) throw new InvalidOperationException("Executor failed");
+#if FIXTURE
+                            const int executorTimeout=5000;
+#else
+                            const int executorTimeout=45*60*1000;
+#endif
+                            // Exit closes the lifetime job and reclaims descendants even if the executor has already exited.
+                            if(!child.WaitForExit(executorTimeout)) { Console.Error.WriteLine("Executor timeout"); return 4; }
+                            if(child.ExitCode!=0) { Console.Error.WriteLine("Executor failed"); return 4; }
                         }
                         var resultPath=Path.Combine(directory,"organized.json");
                         if(new FileInfo(resultPath).Length>2*1024*1024) throw new InvalidDataException();

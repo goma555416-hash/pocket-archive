@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][ValidateSet('Build','Install','Inspect','Uninstall','EnableRunner','Start','Stop','DisableRunner')][string]$Action,
+param([Parameter(Mandatory)][ValidateSet('Build','Install','Inspect','Uninstall','UpdateProbe','EnableRunner','Start','Stop','DisableRunner')][string]$Action,
     [string]$Origin,[string]$RunnerSid,[switch]$ProbeOnly)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
@@ -18,9 +18,27 @@ if($Action -eq 'Build'){
     Get-FileHash "$build\Broker.exe","$build\Runner.exe"
     exit
 }
-if($Action -in @('Install','Uninstall')){
+if($Action -in @('Install','Uninstall','UpdateProbe')){
     $principal=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
     if(-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Run manually in an Administrator console after reviewing this script'}
+}
+if($Action -eq 'UpdateProbe'){
+    $configuration=Get-CimInstance Win32_Service -Filter "Name='PocketArchiveBroker'"
+    if($configuration.StartName -ne "NT SERVICE\$service" -or $configuration.PathName.Trim('"') -ne "$installed\Broker.exe" -or $configuration.StartMode -ne 'Manual'){throw 'Unexpected service configuration; inspect manually'}
+    if([IO.File]::ReadAllText("$installed\origin.txt").Trim() -ne 'https://pocket-archive-isolation.invalid'){throw 'Only ProbeOnly installations may be updated'}
+    if([IO.File]::ReadAllText("$installed\agent.secret").Trim() -ne ('pa_agent_probe0001.'+('x'*40))){throw 'Expected fixed fake credential; update refused'}
+    if(Test-Path -LiteralPath "$installed\Broker.previous.exe"){throw 'Previous backup exists; inspect before another update'}
+    $expected=(Get-FileHash "$build\Broker.exe").Hash
+    Stop-Service $service
+    Copy-Item -LiteralPath "$installed\Broker.exe" -Destination "$installed\Broker.previous.exe"
+    Copy-Item -LiteralPath "$build\Broker.exe" -Destination "$installed\Broker.exe" -Force
+    Native icacls.exe @("$installed\Broker.exe",'/setowner','*S-1-5-18')
+    Native icacls.exe @("$installed\Broker.previous.exe",'/setowner','*S-1-5-18')
+    if((Get-FileHash "$installed\Broker.exe").Hash -ne $expected){throw 'Installed binary hash mismatch; service left stopped'}
+    Start-Service $service
+    Get-CimInstance Win32_Service -Filter "Name='PocketArchiveBroker'" | Select-Object State,ProcessId,StartName,StartMode
+    Get-FileHash "$installed\Broker.exe"
+    exit
 }
 if($Action -eq 'Install'){
     if($ProbeOnly){$Origin='https://pocket-archive-isolation.invalid'}

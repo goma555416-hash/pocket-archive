@@ -34,6 +34,8 @@
 
 ## 憑證隔離：正式啟用的阻斷門檻
 
+2026-11-22 更新：獨立 ProbeOnly 服務已安裝；兩個非管理員身分的檔案／程序拒絕、授權桌面 IPC、服務更新重啟及 Limited 暫時排程已通過。[最新驗收與剩餘門檻](WINDOWS-PROBE-ACCEPTANCE.md) 優先於以下 11-20 的歷史觀察。遠端拒絕、真開機／登入、實際 Codex 排程回收及隔離 HTTPS／Drive 整合仍待驗。未使用生產 credential，未切換 poll。
+
 **Windows broker 隔離未通過實測。** [2026-11-20 SID／ACL／程序／IPC 驗收](WINDOWS-AGENT-ISOLATION.md) 記錄了假憑證測試：一般 sandbox 可從預設 helper 程序讀出假 credential；明確程序 DACL 能擋住，但授權沙盒外的桌面 SID 仍可讀檔／記憶體。沒有啟用排程或把長期 Token 交給 Codex。
 
 建議的可信 runner 必須以不同、不可由 agent 切換的 Windows service identity 執行；credential store、程序記憶體、設定與 runner 程式目錄對 agent 不可讀／寫，agent 也不能取得該身份或 elevation。IPC 使用明確 DACL 且只限本機，禁止依賴預設 named-pipe ACL。Microsoft 說明 named-pipe 存取由 security descriptor/DACL 控制；**同 SID 的兩個程序通常不能僅靠檔案或 pipe ACL 區分信任**，這是我們據此作出的安全判斷。[Microsoft Named Pipe Security](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights)

@@ -66,7 +66,12 @@ class Broker : ServiceBase {
 #endif
         var security = new PipeSecurity();
         security.SetOwner(self);
-        security.SetSecurityDescriptorSddlForm("D:P(D;;GA;;;NU)(A;;GA;;;" + self.Value + ")(A;;0x120003;;;" + client.Value + ")", AccessControlSections.Access);
+        // CreateFile also requires ReadAttributes (0x80); exclude CreateNewInstance (0x4).
+        security.SetSecurityDescriptorSddlForm("D:P(D;;GA;;;NU)(A;;GA;;;" + self.Value + ")(A;;0x120083;;;" + client.Value + ")", AccessControlSections.Access);
+#if FIXTURE
+        // Exercise client data rights instead of masking missing permissions with the server's full-control ACE.
+        security.SetSecurityDescriptorSddlForm("D:P(D;;GA;;;NU)(A;;0x120083;;;" + client.Value + ")", AccessControlSections.Access);
+#endif
         // One persistent first instance prevents replacing the server between requests.
         var pinned = GCHandle.Alloc(security.GetSecurityDescriptorBinaryForm(), GCHandleType.Pinned);
         try {
