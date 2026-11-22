@@ -1,0 +1,23 @@
+// Preparation only. Replace placeholders after explicit approval to create isolated resources.
+// Never deploy this with the production D1 ID, OAuth client, encryption key, or agent credential.
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "pocket-archive-isolated",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-10-17",
+  "assets": { "directory": "..", "binding": "ASSETS", "run_worker_first": ["/api/*"] },
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "pocket-archive-isolated",
+    "database_id": "REPLACE_WITH_NEW_ISOLATED_D1_ID",
+    "migrations_dir": "migrations"
+  }],
+  "vars": {
+    "APP_ORIGIN": "https://pocket-archive-isolated.REPLACE_SUBDOMAIN.workers.dev",
+    "AI_DISPATCH_MODE": "poll",
+    "TOKEN_ENCRYPTION_KEY_VERSION": "1",
+    "SESSION_IDLE_DAYS": "1",
+    "SESSION_ABSOLUTE_DAYS": "2"
+  },
+  "triggers": { "crons": ["7,22,37,52 * * * *"] }
+}

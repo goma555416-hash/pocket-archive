@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][ValidateSet('Build','Install','Inspect','Uninstall','UpdateProbe','EnableRunner','Start','Stop','DisableRunner')][string]$Action,
+param([Parameter(Mandatory)][ValidateSet('Build','Install','Inspect','Uninstall','UpdateProbe','EnableRunner','Start','RunOnce','Stop','DisableRunner')][string]$Action,
     [string]$Origin,[string]$RunnerSid,[switch]$ProbeOnly)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
@@ -6,6 +6,7 @@ $build=Join-Path $repo 'test-results/windows-build'
 $installed=Join-Path $env:ProgramFiles 'PocketArchiveBroker'
 $service='PocketArchiveBroker'
 $task='PocketArchiveRunner'
+. "$PSScriptRoot/task-definition.ps1"
 function Native($program,$arguments) {
     & $program @arguments
     if($LASTEXITCODE -ne 0){ throw "$program failed ($LASTEXITCODE)" }
@@ -14,7 +15,7 @@ if($Action -eq 'Build'){
     New-Item -ItemType Directory -Force -Path $build | Out-Null
     $compiler="$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
     Native $compiler @('/nologo',"/out:$build\Broker.exe",'/r:System.Net.Http.dll','/r:System.Web.Extensions.dll','/r:System.ServiceProcess.dll',"$PSScriptRoot\Broker.cs")
-    Native $compiler @('/nologo',"/out:$build\Runner.exe","$PSScriptRoot\Runner.cs")
+    Native $compiler @('/nologo','/target:winexe',"/out:$build\Runner.exe","$PSScriptRoot\Runner.cs")
     Get-FileHash "$build\Broker.exe","$build\Runner.exe"
     exit
 }
@@ -88,13 +89,18 @@ if($Action -eq 'EnableRunner'){
     if(Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue){throw 'Task already exists'}
     $sid=([Security.Principal.NTAccount]::new("NT SERVICE\$service")).Translate([Security.Principal.SecurityIdentifier]).Value
     $node=(Get-Command node.exe).Source
-    $arguments='"'+$repo+'" "'+$node+'" "'+$service+'" "'+$sid+'"'
-    $execute=New-ScheduledTaskAction -Execute "$build\Runner.exe" -Argument $arguments -WorkingDirectory $repo
-    $user=[Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $trigger=New-ScheduledTaskTrigger -AtLogOn -User $user
-    $principal=New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
-    $settings=New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-    Register-ScheduledTask -TaskName $task -Action $execute -Trigger $trigger -Principal $principal -Settings $settings | Out-Null
+    $codex=Get-CodexExecutable
+    $arguments='"'+$repo+'" "'+$node+'" "'+$service+'" "'+$sid+'" "'+$codex+'" --event'
+    $xml=Get-RunnerTaskXml -Executable "$build\Runner.exe" -Arguments $arguments -WorkingDirectory $repo -UserSid ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+    Register-ScheduledTask -TaskName $task -Xml $xml | Out-Null
+}
+if($Action -eq 'RunOnce'){
+    $sid=([Security.Principal.NTAccount]::new("NT SERVICE\$service")).Translate([Security.Principal.SecurityIdentifier]).Value
+    $node=(Get-Command node.exe).Source
+    $codex=Get-CodexExecutable
+    $arguments='"'+$repo+'" "'+$node+'" "'+$service+'" "'+$sid+'" "'+$codex+'"'
+    $process=Start-Process -FilePath "$build\Runner.exe" -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
+    exit $process.ExitCode
 }
 if($Action -eq 'Start'){
     $stop=Join-Path $repo 'private-data/runner.stop'

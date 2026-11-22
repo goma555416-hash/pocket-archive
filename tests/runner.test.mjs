@@ -5,6 +5,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { executeBatch } from '../scripts/windows/execute-batch.mjs';
+import { waitFor } from './helpers/wait.mjs';
+test('manual sleep observer permits exit notification after a sleep longer than its watchdog',async()=>{
+  let time=0,ticks=0;
+  const options={resumeGrace:true,now:()=>time,pause:async()=>{time+=++ticks===1?190000:100;}};
+  await waitFor(()=>ticks===3,180000,options);
+  ticks=0;time=0;
+  await assert.rejects(waitFor(()=>ticks===3,180000,{...options,resumeGrace:false}),/timed out/);
+});
 test('runner validates binding and evidence before handing bytes to broker',async()=>{
   const directory=await mkdtemp(join(tmpdir(),'pa-runner-'));
   try{

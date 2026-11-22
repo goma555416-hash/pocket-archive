@@ -94,7 +94,7 @@ class Broker : ServiceBase {
                 request.Content.Headers.ContentType=new MediaTypeHeaderValue("application/json");
             }
             using (var reply=api.SendAsync(request).GetAwaiter().GetResult()) {
-                if (claim && (reply.StatusCode==HttpStatusCode.NoContent || reply.StatusCode==HttpStatusCode.Conflict)) return null;
+                if (claim && reply.StatusCode==HttpStatusCode.NoContent) return null;
                 reply.EnsureSuccessStatusCode();
                 return reply.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
             }
@@ -109,6 +109,7 @@ class Broker : ServiceBase {
             var task=pipe.ReadAsync(data,offset,size-offset);
             var remaining=until-DateTime.UtcNow;
             if (remaining<=TimeSpan.Zero || !task.Wait(remaining)) throw new System.TimeoutException();
+            if (DateTime.UtcNow>=until) throw new System.TimeoutException();
             int n=task.Result;
             if(n==0) throw new EndOfStreamException();
             offset+=n;
@@ -120,10 +121,13 @@ class Broker : ServiceBase {
             if(!pipe.WriteAsync(part,0,part.Length).Wait(TimeSpan.FromSeconds(30))) throw new System.TimeoutException();
         }
     }
+    static void Drain() {
+        if(!Task.Run(() => pipe.WaitForPipeDrain()).Wait(TimeSpan.FromSeconds(30))) throw new System.TimeoutException();
+    }
     static void Session() {
         if (Read(1,DateTime.UtcNow.AddSeconds(5))[0]!=1) throw new InvalidDataException();
         var binding=Call(HttpMethod.Post,"/api/ai/agent/claim",null,true);
-        if(binding==null) { Send(new byte[0]); return; }
+        if(binding==null) { Send(new byte[0]); Drain(); return; }
         var claimed=Job(binding);
         var id=(string)claimed["exportId"];
         var attempt=(int)claimed["attempt"];
@@ -145,7 +149,7 @@ class Broker : ServiceBase {
         var ready=Job(Call(HttpMethod.Put,path+"/result"+query,result));
         if((string)ready["status"]!="ready") throw new InvalidDataException();
         Send(Utf8.GetBytes("ready"));
-        if(!Task.Run(() => pipe.WaitForPipeDrain()).Wait(TimeSpan.FromSeconds(30))) throw new System.TimeoutException();
+        Drain();
     }
     static void Loop() {
         while(!stopped) {

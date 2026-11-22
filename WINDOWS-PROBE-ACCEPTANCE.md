@@ -1,5 +1,34 @@
 # Windows ProbeOnly 驗收 — 2026-11-22
 
+## 後續：事件觸發領單（以此段更新目前狀態）
+
+從 commit 9f9f368 接續；事件策略、有限重試及睡眠截止已實作。Worker／D1 schema／App 沒有改動，既有 ProbeOnly 安裝仍保持假憑證、.invalid 與 Manual，沒有更新成生產服務。
+
+| 項目 | 結果 | 實際證據 |
+| --- | --- | --- |
+| 原生工作排程 XML | PASS | Windows Task Scheduler COM parser 接受 Logon／SessionUnlock／EventTrigger；Limited、IgnoreNew、無週期／RestartOnFailure／WakeToRun；加入 Windows 自動測試 |
+| 真解鎖觸發 | PASS | 2026-11-22 22:12:37 +08:00，Unlock.json：Runner 領取空佇列一次、退出，沒有啟動 Codex |
+| 真睡眠恢復觸發及去重 | PASS | 22:12:39 Resume.json：系統喚醒事件啟動 probe；被 60 秒去重抑制，claims=0；Windows System Event ID 1 亦存在 |
+| 真登出後登入觸發 | 未驗證 | 沒有 Logon.json；使用者描述的「登入」尚不能替代獨立 Logon 證據 |
+| 多批排空／空佇列／重複啟動 | PASS（原生假後端） | 3 批依建立順序各一次同 ID 寫回，接到 204 才退出；mutex、事件去重、重啟不重送 |
+| 離線／忙碌 | PASS（原生假後端） | 503 恢復後排空；持續 503 或 409 恰好 4 次後 code 5，不能被誤判為空佇列 |
+| 恢復時已過 Worker 截止 | PASS（邏輯時間回歸） | 提交前測試時鐘前進 61 分鐘，舊 attempt 被拒、零 PATCH；並非真正睡滿一小時 |
+| 寫回後失去回覆／讀回失敗 | PASS（原生假後端） | ready 回覆遺失仍只有一個 PATCH；讀回失敗保持 writeback_uncertain，跨逾時／新事件不重送、不解隔離 |
+| 真 Codex 在 Limited 排程執行 | PASS（公開單批＋模擬 Drive） | 修正排程 PATH 缺漏後，一個公開 IANA 合成批次經真 CLI、既有驗證器、一次同 ID 模擬寫回、空佇列退出。沒有使用額外 AI API |
+| 真 Codex shell 子程序回收 | FAIL／阻斷 | CLI 0.169.1 實際顯示 read-only；exec_command 在建立程序前被 policy 拒絕，沒有生成 tool PID marker。不是證明程序洩漏，也不能宣稱回收通過 |
+| 真執行中睡眠回收 | PASS（事後交叉核對；縮短的本機截止） | 第二次 Runner 22:19:18 啟動，System Record 61320 記錄 22:19:28 睡眠、22:21:14 喚醒。使用者輸出已越過退出碼 4／子孫全退出／零 PATCH／running 保留的斷言；最後讀事件時尚未發佈新紀錄而失敗。22:21:16 事件入庫後比對合成 PID marker 時間與完整時窗一致，保存 Sleep-reconciled.json。不是完整自動 Sleep.json，也不是實際睡滿 60 分鐘 |
+| 遠端 pipe | 未驗證 | sandbox 對本機主機名 TCP 445 不通；不能把 transport failure 當成 Broker remote ACL 已通過，不為測試開放防火牆 |
+
+真正 CLI 的失敗被保留，未改用 danger-full-access、unelevated 或移除 approval/sandbox 保護，也未修改使用者 Codex config／Windows 管理原則。CLI help 與 [官方 Windows sandbox 文件](https://developers.openai.com/codex/windows) 顯示 Windows sandbox 實作另有設定；目前沒有證據證明是設定缺漏或管理政策所致，因此不猜測後放寬。下一階段應先由可信管理者確認可用的受限 Windows sandbox，再補這一項，不重做已過分類。
+
+排程啟動器亦修正 Windows PowerShell 將預期 stderr 當例外的問題：stdout／stderr 分開保存，以原生 exit code 判斷。CLI 路徑在 PATH 找不到時改從 Codex Desktop 安裝目錄解析並傳給 executor。已取得的證據放 git-ignored test-results/windows-events；未提交原始 CLI 日誌、機器 SID 或批次內容。
+
+睡眠探針暴露了兩個測試時序問題：第一次約 188 秒睡眠超過 180 秒觀察 watchdog；第二次程序斷言已通過，但 Power-Troubleshooter 延遲至程序退出後才入庫。已加入長暫停後 10 秒觀察寬限、保留程序斷言 receipt、最多 60 秒等待與本輪開始時間相符的新事件；Runner 的 45 分鐘正式截止與 60 秒編譯期 sleep fixture 截止沒有放寬。時間跳躍回歸證明舊觀察行為會失敗、新行為通過。第二次實際結果由使用者堆疊、PID marker、Runner UTC 日誌與 Windows Event 交叉核對，不將修正後尚未重跑的完整腳本冒充 AUTOMATED。
+
+本階段完整 npm run verify／CI 的最終結果記於 PR，不能沿用下方 9f9f368 的舊戳記。**尚未完成真實操作驗證／已知存在阻斷性問題** 如上；本機事件架構到此收斂，後續資源與端到端矩陣見 ISOLATED-E2E-READINESS.md。未建立新雲端資源或 Google 授權。
+
+---
+
 範圍：Draft PR #34、既有個人 Windows、固定假憑證與 .invalid origin。沒有讀取私人收藏、創建生產 token、部署 Worker、切換 AI_DISPATCH_MODE、停用 Claude、推送 main 或合併。管理員操作全部由使用者手動執行，Codex 工具只在 sandbox 執行。
 
 ## 實測結果
