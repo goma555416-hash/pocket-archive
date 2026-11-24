@@ -72,3 +72,8 @@ git diff --check
 ```
 
 結果：domain／stack 各 3 筆結果，design-system 正常輸出，未使用 persist 或變更專案設計；資料驗證通過 12 個 domain、22 個 stack 與 ui-reasoning。npm test 共 121 個測試通過、0 失敗、0 略過，JS 語法檢查通過；Static Assets 預檢 15 個公開資產及 16 個私人哨兵通過，另驗證 Skill CSV／lock 為 404。未更動執行期程式，本次未另重跑本機 Chromium E2E；PR 的最新 CI 會重新執行既有 E2E 與其他檢查。
+## 2026-11-19：v2.6.0 整理執行端文案
+
+使用專案 ui-ux-pro-max：`status feedback clarity --domain ux -n 2`，首項 Forms / Submit Feedback 適用於送出後的狀態說明。取得 Web Interface Guidelines 公開來源並審查 app.js、index.html、content-evidence.mjs 的變更：證據改為「AI 回報」、送出只承諾等待接手，說明本機未在線時保持排隊。保留 checkbox 與包覆 label、原生按鈕、焦點樣式、aria-live 及既有預覽／Undo。沒有更動 CSS、配色、圖示或框架。
+
+瀏覽器 E2E 驗證中立署名、queued 文案、預覽／套用／Undo、375/390px 不溢出與 v2.6.0 SW 更新；npm run verify = AUTOMATED。iPhone VoiceOver／Dynamic Type／實機畫面未測，見 CODEX-MIGRATION-PLAN.md 的部署前 UAT。

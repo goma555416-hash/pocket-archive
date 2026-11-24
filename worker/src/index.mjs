@@ -418,6 +418,15 @@ const AI_AGENT_JOB_PATH = /^\/api\/ai\/agent\/jobs\/(export-[A-Za-z0-9._:-]{1,11
 
 async function aiRoute(request, env, path) {
   const service = aiJobs(env); const method = request.method;
+  if (path === '/api/ai/agent/claim') {
+    const credential = await service.authenticateAgent(request);
+    const policy = await ownerPolicy(env);
+    const user = await env.DB.prepare('SELECT google_sub FROM users WHERE id=?').bind(credential.user_id).first();
+    if (!policy.configured || !user || !safeEqual(policy.ownerSub, user.google_sub)) throw httpError(403, 'unauthorized_account', 'AI 代理憑證不屬於目前擁有者');
+    if (method !== 'POST') throw httpError(405, 'method_not_allowed', '領單必須使用 POST');
+    const job = await service.agentClaim(credential);
+    return job ? json({ ok: true, job }, 200, { 'Cache-Control': 'no-store' }) : new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
+  }
   if (path === '/api/ai/agent-credentials' && method === 'POST') {
     return authenticatedResponse(request, env, { csrf: true }, async session => json({ ok: true, ...(await service.createCredential(session.user_id, await readJson(request))), warning: '此憑證只顯示一次；請貼到 claude.ai 雲端環境的 Network secrets（Bearer，Host 為後端網址），外洩時立即撤銷。' }, 201));
   }

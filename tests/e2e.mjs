@@ -238,7 +238,9 @@ try {
   const organized = JSON.stringify({ format: 'pocket-archive-organized', schema_version: 2, source_export_id: exportId, items: [{ id: 'imported-e2e', analysis_status: 'completed', suggested_categories: ['閱讀'], suggested_tags: ['已分析'], summary: '依可見測試內容產生的摘要', reason: '已讀取匿名文章正文', confidence: 'high', evidence: { status: 'content_read', kind: 'web_pages', source_url: 'https://example.net/imported', excerpt: visibleBody, observed_at: '2026-10-23T12:00:00.000Z', page_type: 'site_home', pages: [{ url: 'https://example.net/about', title: 'About', page_type: 'page', chars: 400 }] } }] });
   await cdp.evaluate(`(() => { const file=new File([${JSON.stringify(organized)}],'organized.json',{type:'application/json'}); const transfer=new DataTransfer(); transfer.items.add(file); const input=document.querySelector('#organized-file'); input.files=transfer.files; input.dispatchEvent(new Event('change',{bubbles:true})); })()`);
   await waitFor(() => cdp.evaluate("!document.querySelector('#apply-ai').hidden"), 'Codex 差異預覽');
-  assert.ok(await cdp.evaluate("document.querySelector('#ai-preview').textContent.includes('Claude 回報：已讀取網站頁面內容')"), '預覽應顯示網站頁面內容證據');
+  assert.ok(await cdp.evaluate("document.querySelector('#ai-preview').textContent.includes('AI 回報：已讀取網站頁面內容')"), '預覽應顯示網站頁面內容證據');
+  assert.equal(await cdp.evaluate("document.querySelector('#ai-preview').textContent.includes('Claude')"), false, 'Codex 結果不可誤標為 Claude');
+  assert.ok(await cdp.evaluate("document.querySelector('#ai-selection-note').textContent.includes('未接手時會保持排隊')"), '送出不承諾已開始執行');
   assert.equal(await cdp.evaluate("document.querySelector('[data-suggestion-id]').checked"), true, '有正文證據的分類可預設勾選');
   assert.equal(await cdp.evaluate("document.querySelector('[data-select-id=\"imported-e2e\"]')?.closest('.item-card')?.querySelector('.confirmation-label')?.textContent || ''"), '待確認', '套用前：類型尚未確認的收藏顯示待確認');
   await cdp.evaluate("document.querySelector('#apply-ai').click()");
@@ -507,7 +509,7 @@ try {
     await caches.open('pocket-archive-v2.3.1-ai-handoff');
     await navigator.serviceWorker.register('./sw.js?upgrade-v232');
   })()`);
-  await waitFor(() => cdp.evaluate("caches.keys().then(keys=>!keys.includes('pocket-archive-v2.3.1-ai-handoff') && keys.includes('pocket-archive-v2.5.3-ai-reviewed'))"), '舊快取更新清除');
+  await waitFor(() => cdp.evaluate("caches.keys().then(keys=>!keys.includes('pocket-archive-v2.3.1-ai-handoff') && keys.includes('pocket-archive-v2.6.0-agent-poll'))"), '舊快取更新清除');
   assert.ok(await cdp.evaluate("caches.match('./content-evidence.mjs').then(Boolean)"), '新分類模組已離線快取');
   await cdp.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
   await cdp.send('Page.reload');

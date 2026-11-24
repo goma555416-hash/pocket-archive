@@ -4,7 +4,13 @@ Pocket Archive 是給 iPhone／iOS Safari、主畫面 Web App 與 Windows 瀏覽
 
 視覺維持既定 Minimal & Modern、Butter Yellow `#FFF2C9` × Periwinkle `#CBD7EF` 與 A3 實心書籤 Icon。
 
-## v2.5.0 雲端自動 AI 整理（PR 審核中，尚未部署）
+## v2.6.0 Windows Codex 領單（工程候選版，尚未切換）
+
+新增可選 `AI_DISPATCH_MODE=poll` 與原子 claim；預設仍由 Claude Routine 整理。本輪不部署、不停用 Routine、不以私人收藏測試。Windows 憑證隔離尚未驗證，正式啟用有安全門檻。[切換／回滾與測試紀錄](CODEX-MIGRATION-PLAN.md) · [Codex 單批執行指令](CODEX-AGENT-RUN.md)。
+
+2026-11-19 唯讀核對：正式 Worker 最新部署於 2026-11-15，公開 Service Worker 為 v2.5.1；本機基準為 v2.5.3。歷史雲端任務成功不代表本版 UAT 或正式遷移完成，詳見上述紀錄。
+
+## v2.5.0 雲端自動 AI 整理（既有流程）
 
 - 任一端按「AI 整理」→「送出整理」，後端（Cloudflare Worker）觸發 Claude 雲端排程任務；Claude 經專用代理憑證領取批次、交回結果，後端驗證後寫回 Drive 占位檔並讀回比對。
 - 兩端顯示整理狀態（排隊中／整理中／有結果／失敗＋重試）；結果仍須逐項預覽、勾選才套用。

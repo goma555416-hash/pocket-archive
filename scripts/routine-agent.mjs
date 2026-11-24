@@ -11,6 +11,7 @@
 // default backend.
 //
 //   node scripts/routine-agent.mjs job    <exportId> <attempt>
+//   node scripts/routine-agent.mjs claim
 //   node scripts/routine-agent.mjs inbox  <exportId> <attempt> <outPath>
 //   node scripts/routine-agent.mjs submit <exportId> <attempt> <organizedPath>
 //   node scripts/routine-agent.mjs fail   <exportId> <attempt> <code> <message>
@@ -108,7 +109,17 @@ export async function runAgentCommand(argv, { env = process.env, fetchImpl, stdo
   };
   try {
     if (!/^https:\/\//.test(backendOrigin(env))) { line(stderr, 'PA_BACKEND_ORIGIN 必須是 https:// 網址'); return 2; }
-    if (!['job', 'inbox', 'submit', 'fail'].includes(command)) { line(stderr, '用法：job|inbox|submit|fail <exportId> <attempt> ...'); return 2; }
+    if (!['claim', 'job', 'inbox', 'submit', 'fail'].includes(command)) { line(stderr, '用法：claim 或 job|inbox|submit|fail <exportId> <attempt> ...'); return 2; }
+    if (command === 'claim') {
+      if (argv.length !== 1) { line(stderr, 'claim 不接受額外參數'); return 2; }
+      const response = await api(fetchImpl, env, '/api/ai/agent/claim', { method: 'POST' });
+      if (!response.ok) { line(stderr, await errorTextWithHints(response)); return 1; }
+      if (response.status === 204) { line(stdout, JSON.stringify({ job: null })); return 0; }
+      const job = (await response.json()).job;
+      if (!EXPORT_ID.test(job?.exportId || '') || !Number.isSafeInteger(job?.attempt) || job.attempt < 1) throw new Error('領單回應格式無效；不可猜測工作或重新領單');
+      line(stdout, JSON.stringify({ job: { exportId: job.exportId, attempt: job.attempt } }));
+      return 0;
+    }
     if (!EXPORT_ID.test(exportId || '')) { line(stderr, 'exportId 無效'); return 2; }
     const attempt = Number(attemptText);
     if (!Number.isInteger(attempt) || attempt < 1) { line(stderr, 'attempt 必須是正整數'); return 2; }

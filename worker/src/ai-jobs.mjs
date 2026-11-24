@@ -68,7 +68,8 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
     return credential;
   }
 
-  function configured() { return Boolean(env.AI_ROUTINE_FIRE_URL && env.AI_ROUTINE_FIRE_TOKEN); }
+  const dispatchMode = () => env.AI_DISPATCH_MODE || 'routine';
+  function configured() { return dispatchMode() === 'poll' || (dispatchMode() === 'routine' && Boolean(env.AI_ROUTINE_FIRE_URL && env.AI_ROUTINE_FIRE_TOKEN)); }
 
   const jobRow = (userId, exportId) => db.prepare('SELECT * FROM ai_jobs WHERE export_id=? AND user_id=?').bind(exportId, userId).first();
 
@@ -119,10 +120,10 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
     return { inbox, result };
   }
 
-  async function markFailed(exportId, attempt, code, message) {
+  async function markFailed(exportId, attempt, code, message, ownsWrite = false) {
     const at = now();
-    await db.prepare("UPDATE ai_jobs SET status='failed', failure_code=?, failure_message=?, finished_at=?, updated_at=? WHERE export_id=? AND attempt_count=? AND status='running'")
-      .bind(code, String(message || '').slice(0, 300), at, at, exportId, attempt).run();
+    return db.prepare("UPDATE ai_jobs SET status='failed', failure_code=?, failure_message=?, finished_at=?, updated_at=? WHERE export_id=? AND attempt_count=? AND status='running' AND (failure_code IS NULL OR (?=1 AND failure_code='writeback_in_progress'))")
+      .bind(code, String(message || '').slice(0, 300), at, at, exportId, attempt, Number(ownsWrite)).run();
   }
 
   async function fire(row) {
@@ -148,6 +149,7 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
   }
 
   async function startNext(userId) {
+    if (dispatchMode() !== 'routine') return;
     for (let guard = 0; guard < 25; guard += 1) {
       const next = await db.prepare("SELECT * FROM ai_jobs WHERE user_id=? AND status='queued' ORDER BY created_at, export_id LIMIT 1").bind(userId).first();
       if (!next) return;
@@ -158,6 +160,21 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
       const row = await jobRow(userId, next.export_id);
       if (await fire(row)) return;
     }
+  }
+
+  async function agentClaim(credential) {
+    if (dispatchMode() !== 'poll') throw httpError(409, 'claim_disabled', '目前未啟用本機領單模式');
+    const at = now();
+    // Selection and exclusion belong to the same D1 statement, not a read-then-write race.
+    const row = await db.prepare(`UPDATE ai_jobs SET status='running', attempt_count=attempt_count+1,
+      started_at=?, finished_at=NULL, failure_code=NULL, failure_message=NULL, session_url=NULL, updated_at=?
+      WHERE export_id=(SELECT export_id FROM ai_jobs WHERE user_id=? AND status='queued' ORDER BY created_at, export_id LIMIT 1)
+      AND user_id=? AND status='queued' AND NOT EXISTS (SELECT 1 FROM ai_jobs WHERE user_id=? AND status='running')
+      RETURNING export_id, attempt_count`).bind(at, at, credential.user_id, credential.user_id, credential.user_id).first();
+    if (row) return { exportId: row.export_id, attempt: row.attempt_count };
+    const running = await db.prepare("SELECT 1 FROM ai_jobs WHERE user_id=? AND status='running' LIMIT 1").bind(credential.user_id).first();
+    if (running) throw httpError(409, 'agent_busy', '已有工作執行中；不可續領或接管，請等待原執行者完成或逾時');
+    return null;
   }
 
   async function createJob(session, rawBody) {
@@ -188,6 +205,8 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
     const row = await jobRow(session.user_id, exportId);
     if (!row) throw httpError(404, 'job_not_found', '找不到此 AI 整理工作');
     if (row.status !== 'failed') throw httpError(409, 'invalid_state', '只有失敗的工作可以重試');
+    // Older Workers used these codes after PATCH too; matching metadata is not reconciliation.
+    if (['writeback_uncertain', 'writeback_failed', 'writeback_mismatch'].includes(row.failure_code)) throw httpError(409, 'writeback_uncertain', '無法確認先前的 Drive 寫入是否完成；已隔離，請先人工核對，勿重試或重送');
     if (!placeholderUnchanged(await driveMeta(session.user_id, row.result_file_id), row)) {
       const message = '結果占位檔已被改動或刪除，無法重試；請重新送出，或改用備用手動流程匯入';
       await db.prepare("UPDATE ai_jobs SET failure_code='placeholder_changed', failure_message=?, updated_at=? WHERE export_id=? AND status='failed'").bind(message, now(), exportId).run();
@@ -209,8 +228,8 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
 
   async function sweep() {
     const at = now();
-    const stale = await db.prepare("SELECT export_id, attempt_count FROM ai_jobs WHERE status='running' AND started_at < ?").bind(at - RUNNING_TIMEOUT).all();
-    for (const row of stale.results || []) await markFailed(row.export_id, row.attempt_count, 'timeout', 'Claude 雲端任務超過 60 分鐘未回報');
+    const stale = await db.prepare("SELECT export_id, attempt_count FROM ai_jobs WHERE status='running' AND failure_code IS NULL AND started_at <= ?").bind(at - RUNNING_TIMEOUT).all();
+    for (const row of stale.results || []) await markFailed(row.export_id, row.attempt_count, 'timeout', 'AI 整理工作超過 60 分鐘未回報');
     const users = await db.prepare("SELECT DISTINCT user_id FROM ai_jobs WHERE status='queued'").all();
     for (const row of users.results || []) await startNext(row.user_id);
   }
@@ -220,6 +239,11 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
     if (!job) throw httpError(404, 'job_not_found', '找不到此 AI 整理工作');
     if (job.status !== 'running') throw httpError(409, 'invalid_state', '此 AI 整理工作目前不在整理中');
     if (!Number.isInteger(attempt) || attempt !== job.attempt_count) throw httpError(409, 'stale_attempt', '這是舊的整理嘗試，已被取代');
+    if (job.failure_code === 'writeback_in_progress') throw httpError(409, 'writeback_in_progress', '結果正在寫回；不可重複提交或回報失敗。若長時間未完成，請人工核對');
+    if (job.started_at <= now() - RUNNING_TIMEOUT) {
+      await markFailed(exportId, attempt, 'timeout', 'AI 整理工作超過 60 分鐘未回報');
+      throw httpError(409, 'timeout', 'AI 整理工作已逾時，請在 App 重試');
+    }
     return job;
   }
 
@@ -253,54 +277,75 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
       await startNext(job.user_id);
       throw httpError(422, code, error.message);
     }
-    const placeholder = await driveMeta(job.user_id, job.result_file_id);
-    if (!placeholderUnchanged(placeholder, job)) {
-      await markFailed(job.export_id, job.attempt_count, 'placeholder_changed', '結果占位檔在整理期間被改動或刪除，未寫回');
-      await startNext(job.user_id);
-      throw httpError(409, 'placeholder_changed', '結果占位檔在整理期間被改動或刪除，未寫回');
-    }
-    const upload = await driveFetch({ user_id: job.user_id }, `${DRIVE_UPLOAD}/files/${encodeURIComponent(job.result_file_id)}?uploadType=media&fields=${encodeURIComponent(FILE_FIELDS)}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: text
-    });
-    if (!upload.ok) {
-      await markFailed(job.export_id, job.attempt_count, 'writeback_failed', 'Google Drive 寫回失敗');
-      await startNext(job.user_id);
-      throw httpError(502, 'writeback_failed', 'Google Drive 寫回失敗');
-    }
-    // Remember what we wrote so a later retry/resubmit of this job still
-    // recognises the placeholder as ours.
-    const written = await upload.json().catch(() => ({}));
-    await db.prepare('UPDATE ai_jobs SET result_version=?, result_md5=?, updated_at=? WHERE export_id=? AND attempt_count=?')
-      .bind(written.version || null, written.md5Checksum || null, now(), job.export_id, job.attempt_count).run();
-    let readText = null;
+    const expectedSha256 = await sha256Text(text);
+    const receipt = JSON.stringify({ sha256Base64Url: expectedSha256, beforeVersion: job.result_version, beforeMd5: job.result_md5 });
+    if (receipt.length > 240) throw httpError(422, 'recovery_metadata_invalid', '無法完整保存寫回核對資料；未開始寫入');
+    const recoveryMessage = phase => `Drive 寫回未確認（${phase}）；請人工核對。${receipt}`;
+    // Persist recovery evidence before PATCH, including when the Worker dies mid-write.
+    const locked = await db.prepare("UPDATE ai_jobs SET failure_code='writeback_in_progress', failure_message=?, updated_at=? WHERE export_id=? AND user_id=? AND attempt_count=? AND status='running' AND failure_code IS NULL AND started_at>?")
+      .bind(recoveryMessage('reserved'), now(), job.export_id, job.user_id, attempt, now() - RUNNING_TIMEOUT).run();
+    if (!Number(locked.meta?.changes || 0)) throw httpError(409, 'submission_conflict', '工作已改變或正在寫回；未重複提交');
+    let patchStarted = false;
+    let phase = 'patch';
     try {
+      const placeholder = await driveMeta(job.user_id, job.result_file_id);
+      if (!placeholderUnchanged(placeholder, job)) {
+        await markFailed(job.export_id, job.attempt_count, 'placeholder_changed', '結果占位檔在整理期間被改動或刪除，未寫回', true);
+        await startNext(job.user_id);
+        throw httpError(409, 'placeholder_changed', '結果占位檔在整理期間被改動或刪除，未寫回');
+      }
+      patchStarted = true;
+      const upload = await driveFetch({ user_id: job.user_id }, `${DRIVE_UPLOAD}/files/${encodeURIComponent(job.result_file_id)}?uploadType=media&fields=${encodeURIComponent(FILE_FIELDS)}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: text
+      });
+      if (!upload.ok) {
+        throw httpError(502, 'writeback_uncertain', 'Google Drive 寫回未確認；已隔離，請人工核對');
+      }
+      phase = 'metadata';
+      const written = await upload.json();
+      if (written.id !== job.result_file_id || typeof written.version !== 'string' || !written.version || !/^[a-f0-9]{32}$/.test(written.md5Checksum || '')) {
+        throw httpError(502, 'writeback_uncertain', 'Drive 未回傳完整寫入 metadata；請人工核對');
+      }
+      // Keep acknowledged metadata; the durable receipt retains the pre-PATCH values.
+      await db.prepare('UPDATE ai_jobs SET result_version=?, result_md5=?, updated_at=? WHERE export_id=? AND attempt_count=?')
+        .bind(written.version, written.md5Checksum, now(), job.export_id, job.attempt_count).run();
+      phase = 'readback';
       const readBack = await driveFetch({ user_id: job.user_id }, `${DRIVE_API}/files/${encodeURIComponent(job.result_file_id)}?alt=media`);
-      readText = readBack.ok ? await readBack.text() : null;
-    } catch {
-      await markFailed(job.export_id, job.attempt_count, 'writeback_failed', '寫回後無法讀回驗證，可重試');
+      if (!readBack.ok) throw httpError(502, 'writeback_uncertain', '寫回後無法讀回驗證；請人工核對');
+      const readText = await readBack.text();
+      if (await sha256Text(readText) !== expectedSha256) {
+        phase = 'sha_mismatch';
+        throw httpError(502, 'writeback_uncertain', '寫回後讀回的內容不一致；請人工核對');
+      }
+      phase = 'finalize';
+      const finishedAt = now();
+      await db.prepare("UPDATE ai_jobs SET status='ready', failure_code=NULL, failure_message=NULL, finished_at=?, updated_at=? WHERE export_id=? AND attempt_count=? AND status='running' AND failure_code='writeback_in_progress'")
+        .bind(finishedAt, finishedAt, job.export_id, job.attempt_count).run();
       await startNext(job.user_id);
-      throw httpError(502, 'writeback_failed', '寫回後無法讀回驗證，可重試');
+      return { job: publicJob(await jobRow(job.user_id, job.export_id)), items: checked.items.length };
+    } catch (error) {
+      if (patchStarted) {
+        const quarantined = await markFailed(job.export_id, attempt, 'writeback_uncertain', recoveryMessage(phase), true);
+        if (Number(quarantined.meta?.changes || 0)) {
+          await startNext(job.user_id);
+          throw httpError(502, 'writeback_uncertain', `Drive 寫回未確認（${phase}）；已隔離，請人工核對`);
+        }
+      } else {
+        await db.prepare("UPDATE ai_jobs SET failure_code=NULL, failure_message=NULL WHERE export_id=? AND attempt_count=? AND status='running' AND failure_code='writeback_in_progress'").bind(job.export_id, attempt).run();
+      }
+      throw error;
     }
-    if (readText === null || await sha256Text(readText) !== await sha256Text(text)) {
-      await markFailed(job.export_id, job.attempt_count, 'writeback_mismatch', '寫回後讀回的內容不一致');
-      await startNext(job.user_id);
-      throw httpError(502, 'writeback_mismatch', '寫回後讀回的內容不一致');
-    }
-    const finishedAt = now();
-    await db.prepare("UPDATE ai_jobs SET status='ready', finished_at=?, updated_at=? WHERE export_id=? AND attempt_count=? AND status='running'")
-      .bind(finishedAt, finishedAt, job.export_id, job.attempt_count).run();
-    await startNext(job.user_id);
-    return { job: publicJob(await jobRow(job.user_id, job.export_id)), items: checked.items.length };
   }
 
   async function agentFail(credential, exportId, attempt, body) {
     const job = await agentJobRow(credential, exportId, attempt);
     const code = typeof body?.code === 'string' && /^[a-z_]{1,40}$/.test(body.code) ? body.code : 'agent_reported';
     const message = typeof body?.message === 'string' ? body.message.slice(0, 300) : '';
-    await markFailed(job.export_id, job.attempt_count, code, message);
+    const failed = await markFailed(job.export_id, job.attempt_count, code, message);
+    if (!Number(failed.meta?.changes || 0)) throw httpError(409, 'submission_conflict', '工作已改變或正在寫回；未回報失敗');
     await startNext(job.user_id);
     return publicJob(await jobRow(job.user_id, job.export_id));
   }
 
-  return { createCredential, listCredentials, revokeCredential, authenticateAgent, agentGetJob, agentInbox, agentSubmitResult, agentFail, configured, createJob, listJobs, retryJob, markApplied, sweep, startNext };
+  return { createCredential, listCredentials, revokeCredential, authenticateAgent, agentClaim, agentGetJob, agentInbox, agentSubmitResult, agentFail, configured, createJob, listJobs, retryJob, markApplied, sweep, startNext };
 }

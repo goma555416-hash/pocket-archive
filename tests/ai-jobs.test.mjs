@@ -46,6 +46,84 @@ test('agent credential is shown once, hashed, scoped and revocable', { skip }, a
 
 const createJob = (fx, payload) => fx.session('/api/ai/jobs', 'POST', payload);
 
+test('poll keeps jobs queued, atomically claims oldest for only this owner and refuses takeover', { skip }, async () => {
+  const fx = await aiFixture({ configured: false, dispatchMode: 'poll' });
+  const tokens = await Promise.all([fx.newAgentToken(), fx.newAgentToken()]);
+  const claim = token => fx.agent(token, '/api/ai/agent/claim', 'POST');
+  const empty = await claim(tokens[0]);
+  assert.equal(empty.status, 204);
+  assert.equal(await empty.text(), '');
+  assert.equal(empty.headers.get('cache-control'), 'no-store');
+  for (const id of ['export-foreign', 'export-z', 'export-a']) {
+    const created = await (await createJob(fx, fx.seedBatch(id))).json();
+    assert.equal(created.job.status, 'queued');
+    assert.equal(created.job.attempt, 0);
+  }
+  fx.db.database.prepare("UPDATE ai_jobs SET user_id='user-2' WHERE export_id='export-foreign'").run();
+  fx.advance(61 * 60_000); await fx.cron();
+  assert.equal(fx.row('export-a').status, 'queued', 'queued time does not consume runtime');
+  const responses = await Promise.all(tokens.map(claim));
+  assert.deepEqual(responses.map(r => r.status).sort(), [200, 409]);
+  assert.deepEqual((await responses.find(r => r.status === 200).json()).job, { exportId: 'export-a', attempt: 1 });
+  assert.equal((await responses.find(r => r.status === 409).json()).error.code, 'agent_busy');
+  assert.equal((await claim(tokens[0])).status, 409, 'same credential cannot resume through claim');
+  assert.equal(fx.row('export-z').status, 'queued');
+  assert.equal(fx.row('export-foreign').status, 'queued');
+  assert.equal(fx.row('export-a').started_at, fx.now());
+  assert.equal(fx.fires.length, 0);
+});
+
+test('claim uses agent auth, revocation, expiry, method and dispatch gates', { skip }, async () => {
+  const fx = await aiFixture({ dispatchMode: 'poll' });
+  const token = await fx.newAgentToken();
+  assert.equal((await fx.agent('', '/api/ai/agent/claim', 'POST')).status, 401);
+  assert.equal((await fx.agent(token, '/api/ai/agent/claim')).status, 405);
+  assert.equal((await fx.agent(token, '/api/ai/agent/claim?token=x', 'POST')).status, 400);
+  fx.db.database.prepare("UPDATE ai_agent_credentials SET user_id='user-2'").run();
+  assert.equal((await fx.agent(token, '/api/ai/agent/claim', 'POST')).status, 403, 'a credential for a former/non-owner cannot claim');
+  fx.db.database.prepare("UPDATE ai_agent_credentials SET user_id='user-1'").run();
+  for (const mode of [undefined, 'routine', 'polll']) {
+    fx.env.AI_DISPATCH_MODE = mode;
+    const disabled = await fx.agent(token, '/api/ai/agent/claim', 'POST');
+    assert.equal(disabled.status, 409);
+    assert.equal((await disabled.json()).error.code, 'claim_disabled');
+  }
+  assert.equal((await createJob(fx, fx.seedBatch('export-bad-mode'))).status, 503);
+  fx.env.AI_DISPATCH_MODE = 'poll';
+  const credentials = (await (await fx.session('/api/ai/agent-credentials')).json()).credentials;
+  await fx.session(`/api/ai/agent-credentials/${credentials[0].id}`, 'DELETE');
+  assert.equal((await fx.agent(token, '/api/ai/agent/claim', 'POST')).status, 401);
+  const expired = await fx.newAgentToken();
+  fx.advance(91 * 86_400_000);
+  assert.equal((await fx.agent(expired, '/api/ai/agent/claim', 'POST')).status, 401);
+});
+
+test('poll timeout, explicit retry, stale attempt and rollback preserve the queue', { skip }, async () => {
+  const fx = await aiFixture({ dispatchMode: 'poll' });
+  const token = await fx.newAgentToken();
+  await createJob(fx, fx.seedBatch('export-retry-poll'));
+  await fx.agent(token, '/api/ai/agent/claim', 'POST');
+  fx.advance(59 * 60_000); await fx.cron();
+  assert.equal(fx.row('export-retry-poll').status, 'running');
+  fx.advance(2 * 60_000); await fx.cron();
+  assert.equal(fx.row('export-retry-poll').failure_code, 'timeout');
+  const retried = await (await fx.session('/api/ai/jobs/export-retry-poll/retry', 'POST', {})).json();
+  assert.equal(retried.job.status, 'queued');
+  assert.equal(retried.job.attempt, 1);
+  await fx.agent(token, '/api/ai/agent/claim', 'POST');
+  const old = await fx.agent(token, '/api/ai/agent/jobs/export-retry-poll/result?attempt=1', 'PUT', organized('export-retry-poll'));
+  assert.equal((await old.json()).error.code, 'stale_attempt');
+  const submitted = await fx.agent(token, '/api/ai/agent/jobs/export-retry-poll/result?attempt=2', 'PUT', organized('export-retry-poll'));
+  assert.equal(submitted.status, 200);
+  assert.equal((await fx.agent(token, '/api/ai/agent/jobs/export-retry-poll/result?attempt=2', 'PUT', organized('export-retry-poll'))).status, 409);
+  assert.equal(fx.uploads.length, 1);
+  assert.equal(fx.fires.length, 0);
+  await createJob(fx, fx.seedBatch('export-rollback'));
+  fx.env.AI_DISPATCH_MODE = 'routine'; await fx.cron();
+  assert.equal(fx.row('export-rollback').status, 'running');
+  assert.equal(fx.fires.length, 1);
+});
+
 test('create job fires routine with export id only', { skip }, async () => {
   const fx = await aiFixture();
   const payload = fx.seedBatch('export-one');
@@ -220,6 +298,76 @@ test('valid result is written back and read back', { skip }, async () => {
   assert.equal(fx.row('export-next').status, 'running');
 });
 
+test('concurrent submissions write the placeholder only once', { skip }, async () => {
+  const fx = await aiFixture();
+  const { token } = await runningJob(fx);
+  const submit = () => fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
+  const responses = await Promise.all([submit(), submit()]);
+  assert.deepEqual(responses.map(r => r.status).sort(), [200, 409]);
+  assert.equal(fx.uploads.length, 1);
+  assert.equal(fx.row('export-agent').status, 'ready');
+});
+
+test('an in-flight write cannot be failed, timed out or retried underneath the writer', { skip }, async () => {
+  const fx = await aiFixture({ dispatchMode: 'poll' });
+  await createJob(fx, fx.seedBatch('export-agent'));
+  const token = await fx.newAgentToken();
+  await fx.agent(token, '/api/ai/agent/claim', 'POST');
+  const realFetch = fx.env.__fetch;
+  let release; let entered;
+  const enteredPromise = new Promise(resolve => { entered = resolve; });
+  const paused = new Promise(resolve => { release = resolve; });
+  fx.env.__fetch = async (input, options) => {
+    if (options?.method === 'PATCH') { entered(); await paused; }
+    return realFetch(input, options);
+  };
+  const submit = fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
+  await enteredPromise;
+  try {
+    assert.equal((await fx.agent(token, '/api/ai/agent/jobs/export-agent/fail?attempt=1', 'POST', '{"code":"late"}')).status, 409);
+    fx.advance(61 * 60_000); await fx.cron();
+    assert.equal(fx.row('export-agent').status, 'running');
+    assert.equal(fx.row('export-agent').failure_code, 'writeback_in_progress');
+    const { createHash } = await import('node:crypto');
+    assert.ok(fx.row('export-agent').failure_message.includes(createHash('sha256').update(organized('export-agent')).digest('base64url')), 'crash recovery SHA must already be durable before PATCH finishes');
+    assert.ok(fx.row('export-agent').failure_message.includes('"beforeVersion":"1"'));
+    assert.equal((await fx.session('/api/ai/jobs/export-agent/retry', 'POST', {})).status, 409);
+    assert.equal((await fx.agent(token, '/api/ai/agent/claim', 'POST')).status, 409);
+  } finally { release(); }
+  assert.equal((await submit).status, 200);
+  assert.equal(fx.row('export-agent').failure_code, null);
+  assert.equal(fx.uploads.length, 1);
+});
+
+test('uncertain Drive writes are quarantined and cannot be blindly retried', { skip }, async () => {
+  const fx = await aiFixture();
+  const { token } = await runningJob(fx);
+  const realFetch = fx.env.__fetch;
+  fx.env.__fetch = async (input, options) => {
+    const response = await realFetch(input, options);
+    if (options?.method === 'PATCH') throw new Error('connection lost after the write');
+    return response;
+  };
+  const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
+  assert.notEqual(response.status, 200);
+  assert.equal(fx.uploads.length, 1);
+  assert.equal(fx.row('export-agent').failure_code, 'writeback_uncertain');
+  const retry = await fx.session('/api/ai/jobs/export-agent/retry', 'POST', {});
+  assert.equal(retry.status, 409);
+  assert.equal((await retry.json()).error.code, 'writeback_uncertain');
+});
+
+test('deadline is enforced before cron and a late submit never writes', { skip }, async () => {
+  const fx = await aiFixture();
+  const { token } = await runningJob(fx);
+  fx.advance(60 * 60_000);
+  const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).error.code, 'timeout');
+  assert.equal(fx.row('export-agent').failure_code, 'timeout');
+  assert.equal(fx.uploads.length, 0);
+});
+
 test('invalid result fails job without writing', { skip }, async () => {
   const fx = await aiFixture();
   const { token } = await runningJob(fx);
@@ -248,7 +396,7 @@ test('writeback mismatch fails job', { skip }, async () => {
   const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
   assert.equal(response.status, 502);
   assert.equal(fx.row('export-agent').status, 'failed');
-  assert.equal(fx.row('export-agent').failure_code, 'writeback_mismatch');
+  assert.equal(fx.row('export-agent').failure_code, 'writeback_uncertain');
 });
 
 test('stale attempt is rejected', { skip }, async () => {
@@ -291,19 +439,61 @@ test('agent cannot touch other users or non-running jobs', { skip }, async () =>
   assert.equal((await notRunning.json()).error.code, 'invalid_state');
 });
 
-test('write-back mismatch stays recoverable by retry and resubmit', { skip }, async () => {
+for (const fault of ['exception', 'http', 'mismatch', 'metadata']) test(`PATCH success followed by ${fault} stays quarantined with recovery evidence`, { skip }, async () => {
+  const fx = await aiFixture({ dispatchMode: 'poll' });
+  const { token, payload } = await runningJob(fx);
+  await fx.agent(token, '/api/ai/agent/claim', 'POST');
+  const before = fx.row('export-agent');
+  const realFetch = fx.env.__fetch;
+  fx.env.__fetch = async (input, options) => {
+    const response = await realFetch(input, options);
+    if (fault === 'metadata' && options?.method === 'PATCH') return Response.json({});
+    if (String(input).includes(`/files/${payload.resultFileId}?alt=media`)) {
+      if (fault === 'exception') throw new Error('read failed');
+      if (fault === 'http') return new Response('', { status: 503 });
+      if (fault === 'mismatch') return new Response('{"changed":true}');
+    }
+    return response;
+  };
+  const result = organized('export-agent');
+  const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', result);
+  assert.equal(response.status, 502);
+  assert.equal((await response.json()).error.code, 'writeback_uncertain');
+  const quarantined = fx.row('export-agent');
+  assert.equal(quarantined.failure_code, 'writeback_uncertain');
+  assert.equal(quarantined.attempt_count, before.attempt_count);
+  assert.equal(quarantined.result_file_id, before.result_file_id);
+  assert.equal(quarantined.inbox_sha256, before.inbox_sha256);
+  assert.equal(quarantined.pending_sha256, before.pending_sha256);
+  assert.equal(quarantined.result_version, fault === 'metadata' ? before.result_version : '2');
+  assert.ok(quarantined.failure_message.includes(before.result_md5));
+  const { createHash } = await import('node:crypto');
+  assert.ok(quarantined.failure_message.includes(createHash('sha256').update(result).digest('base64url')));
+  fx.env.__fetch = realFetch; // restoration of connectivity is not human reconciliation
+  for (let index = 0; index < 2; index += 1) {
+    const retry = await fx.session('/api/ai/jobs/export-agent/retry', 'POST', {});
+    assert.equal(retry.status, 409);
+    assert.equal((await retry.json()).error.code, 'writeback_uncertain');
+    assert.equal((await fx.agent(token, '/api/ai/agent/claim', 'POST')).status, 204);
+    assert.equal((await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', result)).status, 409);
+  }
+  fx.advance(61 * 60_000); await fx.cron();
+  assert.deepEqual(fx.row('export-agent'), quarantined);
+  assert.equal(fx.uploads.length, 1);
+});
+
+test('legacy writeback failure codes cannot be retried even with matching Drive metadata', { skip }, async () => {
   const fx = await aiFixture();
-  const { token } = await runningJob(fx);
-  fx.setReadBack('{"tampered":true}');
-  await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
-  assert.equal(fx.row('export-agent').failure_code, 'writeback_mismatch');
-  fx.setReadBack(null);
-  const retried = await (await fx.session('/api/ai/jobs/export-agent/retry', 'POST', {})).json();
-  assert.equal(retried.job.status, 'running');
-  assert.equal(retried.job.attempt, 2);
-  const resubmit = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=2', 'PUT', organized('export-agent'));
-  assert.equal(resubmit.status, 200);
-  assert.equal(fx.row('export-agent').status, 'ready');
+  await runningJob(fx);
+  for (const code of ['writeback_failed', 'writeback_mismatch', 'writeback_uncertain']) {
+    fx.db.database.prepare("UPDATE ai_jobs SET status='failed', failure_code=? WHERE export_id='export-agent'").run(code);
+    const before = fx.row('export-agent');
+    const response = await fx.session('/api/ai/jobs/export-agent/retry', 'POST', {});
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).error.code, 'writeback_uncertain');
+    assert.deepEqual(fx.row('export-agent'), before);
+  }
+  assert.equal(fx.fires.length, 1);
 });
 
 test('read-back exception marks the job failed instead of leaving it running', { skip }, async () => {
@@ -313,7 +503,7 @@ test('read-back exception marks the job failed instead of leaving it running', {
   const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
   assert.equal(response.status, 502);
   assert.equal(fx.row('export-agent').status, 'failed');
-  assert.equal(fx.row('export-agent').failure_code, 'writeback_failed');
+  assert.equal(fx.row('export-agent').failure_code, 'writeback_uncertain');
 });
 
 test('retry checks the placeholder first and does not fire when it changed', { skip }, async () => {
@@ -338,4 +528,9 @@ test('transient Drive errors are not reported as placeholder changes', { skip },
   assert.equal(response.status, 503);
   assert.equal(fx.row('export-agent').status, 'running');
   assert.equal(fx.uploads.length, 0);
+  assert.equal(fx.row('export-agent').failure_message, null);
+  fx.env.__fetch = realFetch;
+  const resumed = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
+  assert.equal(resumed.status, 200, 'pre-PATCH failure may resume the same attempt safely');
+  assert.equal(fx.uploads.length, 1);
 });
