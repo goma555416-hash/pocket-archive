@@ -84,7 +84,7 @@ export class CloudAiExchange {
     const raw = JSON.parse(await blob.text());
     if (raw.format !== 'pocket-archive-organized' || raw.schema_version !== 2 || raw.source_export_id !== exportId || !Array.isArray(raw.items)) throw new Error('結果 export_id 或 schema 不匹配');
     if (raw.status === 'pending' && raw.items.length) throw new Error('占位檔包含不匹配的結果');
-    return { file, raw };
+    return { file, raw, blob };
   }
 
   async enqueue(entries, repository, now = new Date()) {
@@ -141,9 +141,8 @@ export class CloudAiExchange {
     if (sources.nextPageToken || slots.nextPageToken ||
         sources.files?.length !== 1 || sources.files[0].id !== inboxId ||
         slots.files?.length !== 1 || slots.files[0].id !== resultId) throw new Error('AI 批次／占位檔不唯一或不可列舉；停止');
-    const [inboxBlob, pendingBlob] = await Promise.all([
-      this.drive.downloadFile(inboxId), this.drive.downloadFile(resultId)
-    ]);
+    const pendingBlob = checked.blob;
+    const inboxBlob = await this.drive.downloadFile(inboxId);
     if (inboxBlob.size > 100 * 1024 * 1024 || pendingBlob.size > 8 * 1024 * 1024) throw new Error('批次或占位檔過大，停止驗證');
     const inboxText = inbox.name.endsWith('.zip')
       ? new TextDecoder().decode((await readZip(inboxBlob)).get('inbox.json'))

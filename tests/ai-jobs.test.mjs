@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { aiFixture, DatabaseSync } from './helpers/ai-fixture.mjs';
+import { aiFixture, DatabaseSync, sha } from './helpers/ai-fixture.mjs';
 
 const skip = !DatabaseSync && 'node:sqlite 需要 Node 22.5+';
 
@@ -386,6 +386,131 @@ test('placeholder changed blocks write', { skip }, async () => {
   const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
   assert.equal(response.status, 409);
   assert.equal(fx.row('export-agent').failure_code, 'placeholder_changed');
+  assert.equal(fx.uploads.length, 0);
+});
+
+function privateVersionDrift(fx, payload) {
+  Object.assign(fx.files.get(payload.resultFileId).meta, { version: '4', ownedByMe: true, shared: false,
+    permissions: [{ type: 'user', role: 'owner' }] });
+}
+
+test('private version-only drift verifies original pending bytes and preserves actual pre-PATCH metadata', { skip }, async () => {
+  const fx = await aiFixture(), { payload, token } = await runningJob(fx);
+  privateVersionDrift(fx, payload);
+  const realFetch = fx.env.__fetch;
+  fx.env.__fetch = async (input, options = {}) => {
+    if (options.method === 'PATCH') {
+      const receipt = fx.row(payload.exportId).failure_message;
+      assert.match(receipt, /"beforeVersion":"4"/);
+      assert.match(receipt, /"registeredVersion":"1"/);
+    }
+    return realFetch(input, options);
+  };
+  const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
+  assert.equal(response.status, 200);
+  assert.equal(fx.uploads.length, 1);
+  assert.equal(fx.uploads[0].id, payload.resultFileId);
+});
+
+for (const fault of ['bytes', 'pending', 'id', 'parent', 'shared', 'permissions', 'null-permission', 'missing-permissions', 'drive', 'owner', 'moving-version']) {
+  test(`version drift fails closed for ${fault}`, { skip }, async () => {
+    const fx = await aiFixture(), { payload, token } = await runningJob(fx);
+    privateVersionDrift(fx, payload);
+    const file = fx.files.get(payload.resultFileId);
+    if (fault === 'bytes') file.content = '{}';
+    if (fault === 'pending') file.meta.appProperties.status = 'ready';
+    if (fault === 'id') file.meta.id = 'other';
+    if (fault === 'parent') file.meta.parents.push('other');
+    if (fault === 'shared') file.meta.shared = true;
+    if (fault === 'permissions') file.meta.permissions.push({ type: 'user', role: 'reader' });
+    if (fault === 'null-permission') file.meta.permissions = [null];
+    if (fault === 'missing-permissions') delete file.meta.permissions;
+    if (fault === 'drive') file.meta.driveId = 'shared-drive';
+    if (fault === 'owner') file.meta.ownedByMe = false;
+    const realFetch = fx.env.__fetch;
+    if (fault === 'moving-version') fx.env.__fetch = async (input, options) => {
+      if (String(input).includes(`/files/${payload.resultFileId}?alt=media`)) file.meta.version = '5';
+      return realFetch(input, options);
+    };
+    const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
+    assert.equal(response.status, 409);
+    assert.equal(fx.uploads.length, 0);
+    assert.equal(fx.row(payload.exportId).failure_code, 'placeholder_changed');
+  });
+}
+
+for (const changed of [false, true]) test(`stale retry cannot clear or relabel a newer quarantined attempt (changed=${changed})`, { skip }, async () => {
+  const fx = await aiFixture(), { payload } = await runningJob(fx);
+  fx.db.database.prepare("UPDATE ai_jobs SET status='failed',failure_code='timeout' WHERE export_id=?").run(payload.exportId);
+  const realFetch = fx.env.__fetch;
+  fx.env.__fetch = async (input, options) => {
+    if (String(input).includes(`/files/${payload.resultFileId}?fields`)) {
+      fx.db.database.prepare("UPDATE ai_jobs SET attempt_count=2,failure_code='writeback_uncertain',failure_message='preserve receipt' WHERE export_id=?").run(payload.exportId);
+      if (changed) fx.files.get(payload.resultFileId).meta.version = '9';
+    }
+    return realFetch(input, options);
+  };
+  const response = await fx.session('/api/ai/jobs/export-agent/retry', 'POST', {});
+  assert.equal(response.status, 409);
+  const row = fx.row(payload.exportId);
+  assert.equal(row.attempt_count, 2);
+  assert.equal(row.status, 'failed');
+  assert.equal(row.failure_code, 'writeback_uncertain');
+  assert.equal(row.failure_message, 'preserve receipt');
+});
+
+for (const nullEnvelope of [false, true]) test(`drift proof requires pending envelope even when its hash matches registration (null=${nullEnvelope})`, { skip }, async () => {
+  const fx = await aiFixture(), { payload, token } = await runningJob(fx);
+  privateVersionDrift(fx, payload);
+  const file = fx.files.get(payload.resultFileId);
+  file.content = JSON.stringify(nullEnvelope ? null : { format: 'pocket-archive-organized', schema_version: 2, source_export_id: payload.exportId, status: 'ready', items: [] });
+  fx.db.database.prepare('UPDATE ai_jobs SET pending_sha256=? WHERE export_id=?').run(sha(file.content), payload.exportId);
+  const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
+  assert.equal(response.status, 409);
+  assert.equal(fx.uploads.length, 0);
+});
+
+test('final drift metadata check refuses permissions changed after receipt persistence', { skip }, async () => {
+  const fx = await aiFixture(), { payload, token } = await runningJob(fx);
+  privateVersionDrift(fx, payload);
+  const realFetch = fx.env.__fetch; let reads = 0;
+  fx.env.__fetch = async (input, options) => {
+    if (String(input).includes(`/files/${payload.resultFileId}?fields`) && ++reads === 3) {
+      fx.files.get(payload.resultFileId).meta.permissions.push({ type: 'anyone', role: 'reader' });
+    }
+    return realFetch(input, options);
+  };
+  const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
+  assert.equal(response.status, 409);
+  assert.equal(fx.uploads.length, 0);
+});
+
+test('drift write with failed read-back retains observed and registered versions and forbids retry', { skip }, async () => {
+  const fx = await aiFixture(), { payload, token } = await runningJob(fx);
+  privateVersionDrift(fx, payload);
+  fx.setReadBack('THROW');
+  const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
+  assert.equal(response.status, 502);
+  const row = fx.row(payload.exportId);
+  assert.equal(row.failure_code, 'writeback_uncertain');
+  assert.match(row.failure_message, /"beforeVersion":"4"/);
+  assert.match(row.failure_message, /"registeredVersion":"1"/);
+  for (let i=0;i<2;i++) assert.equal((await fx.session('/api/ai/jobs/export-agent/retry','POST',{})).status,409);
+  assert.deepEqual(fx.row(payload.exportId),row);
+  assert.equal(fx.uploads.length,1);
+});
+
+test('expiry during drift proof never starts PATCH', { skip }, async () => {
+  const fx = await aiFixture(), { payload, token } = await runningJob(fx);
+  privateVersionDrift(fx, payload);
+  const realFetch = fx.env.__fetch;
+  fx.env.__fetch = async (input, options) => {
+    if (String(input).includes(`/files/${payload.resultFileId}?alt=media`)) fx.advance(61 * 60_000);
+    return realFetch(input, options);
+  };
+  const response = await fx.agent(token, '/api/ai/agent/jobs/export-agent/result?attempt=1', 'PUT', organized('export-agent'));
+  assert.equal(response.status, 409);
+  assert.equal(fx.row(payload.exportId).failure_code, 'timeout');
   assert.equal(fx.uploads.length, 0);
 });
 

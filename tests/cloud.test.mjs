@@ -152,6 +152,17 @@ test('AI App preflight verifies full appProperties, unique file IDs, hashes and 
   assert.equal(proof.resultFileId, request.resultFileId);
   assert.match(proof.inboxSha256, /^[a-f0-9]{64}$/);
 
+  const originalDownload = drive.downloadFile;
+  let pendingReads = 0;
+  drive.downloadFile = async id => {
+    if (id === request.resultFileId && ++pendingReads > 1) return new Blob(['{"status":"changed"}']);
+    return originalDownload(id);
+  };
+  const sameBytes = await exchange.launchEvidence(request);
+  assert.equal(sameBytes.pendingSha256, proof.pendingSha256, 'hash the exact bytes validated as pending');
+  assert.equal(pendingReads, 1, 'do not hash a second unvalidated download');
+  drive.downloadFile = originalDownload;
+
   const inbox = files.get(request.inboxFileId), result = files.get(request.resultFileId);
   delete inbox.appProperties.resultFileId;
   await assert.rejects(() => exchange.launchEvidence(request), /metadata/);

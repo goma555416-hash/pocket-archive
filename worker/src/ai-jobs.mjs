@@ -3,6 +3,8 @@
 import { randomToken, safeEqual, sha256Text } from './security.mjs';
 import { checkOrganizedForJob } from '../../organized-shape.mjs';
 import { TEXT_KINDS } from '../../content-evidence.mjs';
+import { sha256 } from '../../lib.mjs';
+import { boundedBytes } from './capture-images.mjs';
 
 const AGENT_TOKEN = /^Bearer\s+pa_agent_([A-Za-z0-9_-]{8,64})\.([A-Za-z0-9_-]{32,128})$/;
 const DAY = 86_400_000;
@@ -11,7 +13,7 @@ const RUNNING_TIMEOUT = 60 * 60_000;
 const DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const DRIVE_UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
 const MAX_RESULT_BYTES = 2 * 1024 * 1024;
-const FILE_FIELDS = 'id,name,mimeType,size,createdTime,modifiedTime,md5Checksum,version,appProperties,parents,trashed';
+const FILE_FIELDS = 'id,name,mimeType,size,createdTime,modifiedTime,md5Checksum,version,appProperties,parents,trashed,ownedByMe,shared,driveId,permissions(type,role)';
 const EXPORT_ID = /^export-[A-Za-z0-9._:-]{1,110}$/;
 const FILE_ID = /^[A-Za-z0-9_-]{4,256}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -80,10 +82,36 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
     return response.json();
   }
 
-  // The placeholder is still the file we registered (or last wrote ourselves).
-  function placeholderUnchanged(placeholder, job) {
+  function placeholderMatches(placeholder, job) {
     const binding = { exportId: job.export_id, inboxFileId: job.inbox_file_id, resultsFolderId: job.results_folder_id };
-    return resultBindingOk(placeholder, binding) && placeholder.version === job.result_version && placeholder.md5Checksum === job.result_md5;
+    return resultBindingOk(placeholder, binding) && placeholder.id === job.result_file_id && placeholder.parents.length === 1 &&
+      placeholder.appProperties.status === 'pending' && /^[a-f0-9]{32}$/.test(job.result_md5 || '') && placeholder.md5Checksum === job.result_md5;
+  }
+
+  function ownerOnly(file) {
+    return file.ownedByMe === true && file.shared === false && !file.driveId &&
+      Array.isArray(file.permissions) && file.permissions.length === 1 && file.permissions[0]?.type === 'user' && file.permissions[0]?.role === 'owner';
+  }
+
+  async function unchangedPlaceholder(job) {
+    const file = await driveMeta(job.user_id, job.result_file_id);
+    if (!placeholderMatches(file, job)) return null;
+    if (file.version === job.result_version) return file;
+    // Drive version includes invisible changes. Only prove unchanged, private pending bytes; never adopt unknown edits.
+    if (!/^\d{1,20}$/.test(file.version || '') || !/^\d{1,20}$/.test(job.result_version || '') ||
+        BigInt(file.version) <= BigInt(job.result_version) || !ownerOnly(file)) return null;
+    const response = await driveFetch({ user_id: job.user_id }, `${DRIVE_API}/files/${encodeURIComponent(job.result_file_id)}?alt=media`);
+    if (!response.ok) throw httpError(503, 'drive_unavailable', '無法核對原占位檔內容；未寫入');
+    let bytes;
+    try { bytes = await boundedBytes(response.body, 8 * 1024 * 1024, 20_000); }
+    catch { throw httpError(503, 'drive_unavailable', '無法完整核對原占位檔內容；未寫入'); }
+    if (await sha256(bytes) !== job.pending_sha256) return null;
+    let pending;
+    try { pending = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); } catch { return null; }
+    if (pending?.format !== 'pocket-archive-organized' || pending.schema_version !== 2 || pending.source_export_id !== job.export_id ||
+        pending.status !== 'pending' || !Array.isArray(pending.items) || pending.items.length) return null;
+    const fresh = await driveMeta(job.user_id, job.result_file_id);
+    return placeholderMatches(fresh, job) && ownerOnly(fresh) && fresh.version === file.version ? fresh : null;
   }
 
   function validateCreateBody(body) {
@@ -207,12 +235,16 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
     if (row.status !== 'failed') throw httpError(409, 'invalid_state', '只有失敗的工作可以重試');
     // Older Workers used these codes after PATCH too; matching metadata is not reconciliation.
     if (['writeback_uncertain', 'writeback_failed', 'writeback_mismatch'].includes(row.failure_code)) throw httpError(409, 'writeback_uncertain', '無法確認先前的 Drive 寫入是否完成；已隔離，請先人工核對，勿重試或重送');
-    if (!placeholderUnchanged(await driveMeta(session.user_id, row.result_file_id), row)) {
+    if (!await unchangedPlaceholder(row)) {
       const message = '結果占位檔已被改動或刪除，無法重試；請重新送出，或改用備用手動流程匯入';
-      await db.prepare("UPDATE ai_jobs SET failure_code='placeholder_changed', failure_message=?, updated_at=? WHERE export_id=? AND status='failed'").bind(message, now(), exportId).run();
+      const changed = await db.prepare("UPDATE ai_jobs SET failure_code='placeholder_changed', failure_message=?, updated_at=? WHERE export_id=? AND user_id=? AND status='failed' AND attempt_count=? AND failure_code IS ?")
+        .bind(message, now(), exportId, session.user_id, row.attempt_count, row.failure_code).run();
+      if (!Number(changed.meta?.changes || 0)) throw httpError(409, 'retry_conflict', '工作已改變，未重試或清除隔離');
       throw httpError(409, 'placeholder_changed', message);
     }
-    await db.prepare("UPDATE ai_jobs SET status='queued', failure_code=NULL, failure_message=NULL, finished_at=NULL, session_url=NULL, updated_at=? WHERE export_id=? AND status='failed'").bind(now(), exportId).run();
+    const retried = await db.prepare("UPDATE ai_jobs SET status='queued', failure_code=NULL, failure_message=NULL, finished_at=NULL, session_url=NULL, updated_at=? WHERE export_id=? AND user_id=? AND status='failed' AND attempt_count=? AND failure_code IS ?")
+      .bind(now(), exportId, session.user_id, row.attempt_count, row.failure_code).run();
+    if (!Number(retried.meta?.changes || 0)) throw httpError(409, 'retry_conflict', '工作已改變，未重試或清除隔離');
     await startNext(session.user_id);
     return publicJob(await jobRow(session.user_id, exportId));
   }
@@ -278,7 +310,7 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
       throw httpError(422, code, error.message);
     }
     const expectedSha256 = await sha256Text(text);
-    const receipt = JSON.stringify({ sha256Base64Url: expectedSha256, beforeVersion: job.result_version, beforeMd5: job.result_md5 });
+    let receipt = JSON.stringify({ sha256Base64Url: expectedSha256, beforeVersion: job.result_version, beforeMd5: job.result_md5 });
     if (receipt.length > 240) throw httpError(422, 'recovery_metadata_invalid', '無法完整保存寫回核對資料；未開始寫入');
     const recoveryMessage = phase => `Drive 寫回未確認（${phase}）；請人工核對。${receipt}`;
     // Persist recovery evidence before PATCH, including when the Worker dies mid-write.
@@ -288,11 +320,29 @@ export function aiJobService({ env, now, driveFetch, fetchImpl, httpError }) {
     let patchStarted = false;
     let phase = 'patch';
     try {
-      const placeholder = await driveMeta(job.user_id, job.result_file_id);
-      if (!placeholderUnchanged(placeholder, job)) {
+      const placeholder = await unchangedPlaceholder(job);
+      if (!placeholder) {
         await markFailed(job.export_id, job.attempt_count, 'placeholder_changed', '結果占位檔在整理期間被改動或刪除，未寫回', true);
         await startNext(job.user_id);
         throw httpError(409, 'placeholder_changed', '結果占位檔在整理期間被改動或刪除，未寫回');
+      }
+      if (placeholder.version !== job.result_version) {
+        receipt = JSON.stringify({ sha256Base64Url: expectedSha256, beforeVersion: placeholder.version, beforeMd5: placeholder.md5Checksum, registeredVersion: job.result_version });
+        if (receipt.length > 240) throw httpError(422, 'recovery_metadata_invalid', '無法完整保存寫回核對資料；未開始寫入');
+        const saved = await db.prepare("UPDATE ai_jobs SET failure_message=?, updated_at=? WHERE export_id=? AND user_id=? AND attempt_count=? AND status='running' AND failure_code='writeback_in_progress'")
+          .bind(recoveryMessage('verified_pending'), now(), job.export_id, job.user_id, attempt).run();
+        if (!Number(saved.meta?.changes || 0)) throw httpError(409, 'submission_conflict', '工作已改變；未寫入');
+        const final = await driveMeta(job.user_id, job.result_file_id);
+        if (!placeholderMatches(final, job) || !ownerOnly(final) || final.version !== placeholder.version) {
+          await markFailed(exportId, attempt, 'placeholder_changed', '占位檔在核對期間改變；未寫入', true);
+          await startNext(job.user_id);
+          throw httpError(409, 'placeholder_changed', '占位檔在核對期間改變；未寫入');
+        }
+      }
+      if (job.started_at <= now() - RUNNING_TIMEOUT) {
+        await markFailed(exportId, attempt, 'timeout', '核對占位檔時工作已逾時；未寫入', true);
+        await startNext(job.user_id);
+        throw httpError(409, 'timeout', '核對占位檔時工作已逾時；未寫入');
       }
       patchStarted = true;
       const upload = await driveFetch({ user_id: job.user_id }, `${DRIVE_UPLOAD}/files/${encodeURIComponent(job.result_file_id)}?uploadType=media&fields=${encodeURIComponent(FILE_FIELDS)}`, {

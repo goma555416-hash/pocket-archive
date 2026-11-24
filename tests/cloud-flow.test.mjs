@@ -137,6 +137,8 @@ for (const dispatchMode of ['routine', 'poll']) test(`${dispatchMode} organize p
     const organizedPath = join(dir, 'organized.json');
     await writeFile(organizedPath, JSON.stringify(organized));
     await node([script('validate-organized.mjs'), organizedPath, inboxPath, '--require-evidence']);
+    // Real Drive may bump version for invisible metadata changes after registration.
+    Object.assign(fx.files.get(payload.resultFileId).meta, { version: '4', ownedByMe: true, shared: false, permissions: [{ type: 'user', role: 'owner' }] });
     const submissions = await Promise.allSettled([0, 1].map(() => node([script('routine-agent.mjs'), 'submit', exportId, '1', organizedPath])));
     assert.equal(submissions.filter(r => r.status === 'fulfilled').length, 1, 'only one concurrent submit may write');
     assert.match(submissions.find(r => r.status === 'fulfilled').value.stdout, /ready/);

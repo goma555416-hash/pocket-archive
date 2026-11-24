@@ -1,5 +1,20 @@
 # Pocket Archive 正式 Windows 接手
 
+## 2026-11-25 真實切換驗收與 v2.6.1 修正
+
+PR #34 已合併（8e235c0）；v2.6.0 正式 routine 安全版本 b2d4c24b-9e70-4a87-9889-b8bf3a831c32 可回復。使用者已安裝正式 Broker（PID 47512）並設定 delayed-auto；一般桌面及真 Codex 的五個檔案、九項程序權限拒絕通過，桌面 pipe owner/PID/opcode 0 通過。正式 Limited 事件排程成功領取空佇列後退出。
+
+第一次公開雙文件批次 attempt 1：真 Codex 完成內容證據，但 Drive 占位檔 version 3→4、MD5 不變，Worker 在 PATCH 前以 placeholder_changed 拒絕。已停止／停用 Runner 排程，恢復上述安全 routine 版本；原 file ID、pending bytes、批次與本機結果完整保留，未直接改 D1 或重送。此事件不是 writeback_uncertain，也不是成功寫回。最終版本與實測結果以 PR 的執行紀錄為準。
+
+v2.6.1 針對實際阻礙補強：
+
+- 一般路徑維持版本比對；僅版本上升可進入強化核對，需原 ID／單一 parent／名稱／MIME／pending 綁定／MD5 全符，且明確 ownedByMe、shared=false、非 shared drive、完整 permissions 只有一個 user/owner。權限缺漏或額外分享一律拒絕。
+- 有界下載同一份原始 bytes，比對註冊的 pending SHA-256 並驗證空 pending envelope；再讀 metadata 確認版本與權限。鎖內保存實際 beforeVersion 及 registeredVersion，PATCH 前最後重驗。保留所有 PATCH 後不確定隔離，不以這條路恢復 uncertain 工作。
+- retry 的兩個更新均以 user／attempt／原 failure code 做原子條件比對，避免舊重試清除較新 attempt 的隔離。App 的註冊 SHA 改用已驗證的同一份 blob，消除兩次下載間的內容競態。
+- 沒有新 schema、沒有放寬 Broker、沒有另外建立結果檔。Drive 最後 GET 與 PATCH 仍無已驗證的外部原子 CAS；不要在整理期間以其他程式修改或分享 AI-Results。這是既有外部寫入競態限制，D1 鎖仍保護 Pocket Archive 自身的並發。
+
+依據：[Drive version／完整 permissions 欄位](https://developers.google.com/workspace/drive/api/reference/rest/v3/files)。回歸先在舊程式重現版本拒絕、兩條 stale retry 隔離破壞及 App blob 競態；新增 core flow 在 routine／poll 均涵蓋版本漂移。
+
 2026-11-24 使用者授權：沿用同一 Worker、D1、Google OAuth、Drive 與 PWA；合併 PR #34、部署、切換與停用舊 Routine。取消新增測試雲端環境。這份文件是可執行程序，完成與否以 PR 最新實際結果為準。
 
 ## 已核對及保留
