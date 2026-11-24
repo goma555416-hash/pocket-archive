@@ -1,5 +1,5 @@
-param([Parameter(Mandatory)][ValidateSet('Build','Install','Inspect','Uninstall','UpdateProbe','EnableRunner','Start','RunOnce','Stop','DisableRunner')][string]$Action,
-    [string]$Origin,[string]$RunnerSid,[switch]$ProbeOnly)
+param([Parameter(Mandatory)][ValidateSet('Build','Install','Inspect','Uninstall','UpdateProbe','PromoteProduction','RestoreProbe','EnableRunner','Start','RunOnce','Stop','DisableRunner')][string]$Action,
+    [string]$Origin,[string]$RunnerSid,[switch]$ProbeOnly,[string]$BrokerHash)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $build=Join-Path $repo 'test-results/windows-build'
@@ -19,9 +19,86 @@ if($Action -eq 'Build'){
     Get-FileHash "$build\Broker.exe","$build\Runner.exe"
     exit
 }
-if($Action -in @('Install','Uninstall','UpdateProbe')){
+if($Action -in @('Install','Uninstall','UpdateProbe','PromoteProduction','RestoreProbe')){
     $principal=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
     if(-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Run manually in an Administrator console after reviewing this script'}
+}
+if($Action -in @('PromoteProduction','RestoreProbe')){
+    if(-not (Test-Path -LiteralPath (Join-Path $repo 'private-data/runner.stop'))){throw 'Run manage.ps1 Stop first; do not change an active broker'}
+    $cutoverMutex=[Threading.Mutex]::new($false,'Local\PocketArchiveRunner')
+    try{$ownsMutex=$cutoverMutex.WaitOne(0)}catch [Threading.AbandonedMutexException]{$ownsMutex=$true}
+    if(-not $ownsMutex){$cutoverMutex.Dispose();throw 'Runner is still active; wait for it to drain'}
+    try{
+    $production='https://pocket-archive.goma555416.workers.dev'
+    $backup=Join-Path $installed 'probe-backup'
+    $configuration=Get-CimInstance Win32_Service -Filter "Name='PocketArchiveBroker'"
+    if($configuration.StartName -ne "NT SERVICE\$service" -or $configuration.PathName.Trim('"') -ne "$installed\Broker.exe"){throw 'Unexpected service identity or executable'}
+    $sid=([Security.Principal.NTAccount]::new("NT SERVICE\$service")).Translate([Security.Principal.SecurityIdentifier]).Value
+    function AssertProtected([string]$path){
+        if((Get-Item -LiteralPath $path).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Reparse point refused'}
+        $acl=Get-Acl -LiteralPath $path
+        if($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne 'S-1-5-18'){throw 'SYSTEM ownership required'}
+        foreach($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])){
+            if($rule.AccessControlType -ne 'Allow'){continue}
+            $who=$rule.IdentityReference.Value
+            if($who -notin @('S-1-5-18','S-1-5-32-544',$sid)){throw 'Unexpected file access principal'}
+            if($who -eq $sid -and ([int]$rule.FileSystemRights -band (-bnot 0x1200a9))){throw 'Service must have read/execute access only'}
+        }
+    }
+    AssertProtected $installed
+    if(-not (Get-Acl -LiteralPath $installed).AreAccessRulesProtected){throw 'Installation must disable ACL inheritance'}
+    $files=@('Broker.exe','origin.txt','runner.sid','agent.secret')
+    foreach($name in $files){AssertProtected (Join-Path $installed $name)}
+    $runnerTask=Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
+    if($runnerTask -and $runnerTask.State -ne 'Disabled'){throw 'Disable the Runner task before changing the broker'}
+    if($Action -eq 'PromoteProduction'){
+        if($configuration.StartMode -ne 'Manual' -or (Test-Path -LiteralPath "$installed\production.enabled")){throw 'Expected Manual ProbeOnly installation'}
+        if([IO.File]::ReadAllText("$installed\origin.txt").Trim() -ne 'https://pocket-archive-isolation.invalid' -or [IO.File]::ReadAllText("$installed\agent.secret").Trim() -ne ('pa_agent_probe0001.'+('x'*40))){throw 'Only the known fake ProbeOnly configuration can be promoted'}
+        if($BrokerHash -notmatch '^[a-fA-F0-9]{64}$' -or (Get-FileHash "$build\Broker.exe").Hash -ne $BrokerHash){throw 'Reviewed build SHA-256 required'}
+        if(Test-Path -LiteralPath $backup){
+            AssertProtected $backup
+            foreach($name in $files){
+                AssertProtected (Join-Path $backup $name)
+                if((Get-FileHash (Join-Path $backup $name)).Hash -ne (Get-FileHash (Join-Path $installed $name)).Hash){throw 'Existing backup differs from restored ProbeOnly; inspect before promotion'}
+            }
+        }
+        $secret=Read-Host 'New Windows production agent credential (not the Claude credential)' -AsSecureString
+        $ptr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+        try{
+            $token=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+            if($token -notmatch '^pa_agent_[A-Za-z0-9_-]{8,64}\.[A-Za-z0-9_-]{32,128}$'){throw 'Invalid credential format'}
+            Stop-Service $service
+            if(-not (Test-Path -LiteralPath $backup)){
+                New-Item -ItemType Directory -Path $backup | Out-Null
+                foreach($name in $files){Copy-Item -LiteralPath (Join-Path $installed $name) -Destination (Join-Path $backup $name)}
+                Native icacls.exe @($backup,'/setowner','*S-1-5-18','/T')
+            }
+            foreach($name in $files){AssertProtected (Join-Path $backup $name)}
+            Copy-Item -LiteralPath "$build\Broker.exe" -Destination "$installed\Broker.exe" -Force
+            if((Get-FileHash "$installed\Broker.exe").Hash -ne $BrokerHash){throw 'Installed hash mismatch; service left stopped'}
+            [IO.File]::WriteAllText("$installed\origin.txt",$production)
+            [IO.File]::WriteAllText("$installed\agent.secret",$token)
+            [IO.File]::WriteAllText("$installed\production.enabled",$production)
+            Native icacls.exe @("$installed\Broker.exe",'/setowner','*S-1-5-18')
+            Native icacls.exe @("$installed\production.enabled",'/setowner','*S-1-5-18')
+            foreach($name in ($files+@('production.enabled'))){AssertProtected (Join-Path $installed $name)}
+        }finally{$token=$null;[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr);$secret.Dispose()}
+    }else{
+        AssertProtected $backup
+        foreach($name in $files){AssertProtected (Join-Path $backup $name)}
+        if([IO.File]::ReadAllText("$backup\origin.txt").Trim() -ne 'https://pocket-archive-isolation.invalid' -or [IO.File]::ReadAllText("$backup\agent.secret").Trim() -ne ('pa_agent_probe0001.'+('x'*40))){throw 'Backup is not the known fake ProbeOnly configuration'}
+        Stop-Service $service
+        foreach($name in $files){Copy-Item -LiteralPath (Join-Path $backup $name) -Destination (Join-Path $installed $name) -Force}
+        if(Test-Path -LiteralPath "$installed\production.enabled"){Remove-Item -LiteralPath "$installed\production.enabled"}
+        foreach($name in $files){Native icacls.exe @((Join-Path $installed $name),'/setowner','*S-1-5-18')}
+    }
+    # Keep Manual until the ordinary desktop and sandbox probes have passed again.
+    Native sc.exe @('config',$service,'start=','demand')
+    Start-Service $service
+    Get-CimInstance Win32_Service -Filter "Name='PocketArchiveBroker'" | Select-Object State,ProcessId,StartName,StartMode
+    Get-FileHash "$installed\Broker.exe"
+    exit
+    }finally{$cutoverMutex.ReleaseMutex();$cutoverMutex.Dispose()}
 }
 if($Action -eq 'UpdateProbe'){
     $configuration=Get-CimInstance Win32_Service -Filter "Name='PocketArchiveBroker'"

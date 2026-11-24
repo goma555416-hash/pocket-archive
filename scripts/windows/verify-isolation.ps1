@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][int]$BrokerPid)
+param([Parameter(Mandatory)][int]$BrokerPid,[switch]$Production)
 $ErrorActionPreference='Stop'
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 $principal=[Security.Principal.WindowsPrincipal]::new($identity)
@@ -13,7 +13,9 @@ public static class IsolationProbe {
 '@
 $root=Join-Path $env:ProgramFiles 'PocketArchiveBroker'
 $failed=$false
-foreach($name in @('agent.secret','origin.txt','runner.sid','Broker.exe')){
+$files=@('agent.secret','origin.txt','runner.sid','Broker.exe')
+if($Production){$files+='production.enabled'}
+foreach($name in $files){
     foreach($access in @('Read','ReadWrite')){
         $handle=$null
         try{

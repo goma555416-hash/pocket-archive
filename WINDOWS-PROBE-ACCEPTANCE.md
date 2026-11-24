@@ -1,5 +1,22 @@
 # Windows ProbeOnly 驗收 — 2026-11-22
 
+## 2026-11-24 正式接手準備（優先於下方歷史狀態）
+
+使用者已取消新增隔離雲端資源並授權正式遷移，程序見 [PRODUCTION-CUTOVER.md](PRODUCTION-CUTOVER.md)。以下新證據解除先前的 Codex shell 政策阻礙；不代表正式服務已切換。
+
+| 項目 | 結果 | 實際證據 |
+| --- | --- | --- |
+| 真 Codex shell 子程序回收 | PASS | `--ignore-user-config` 不載入既有 Windows sandbox 設定；明確指定 `windows.sandbox="elevated"` 後，真 CLI 產生 shell PID marker，停止 Runner 後 executor／CLI／shell 全退出，零寫回／重播。未使用 full-access、未改管理政策 |
+| 真 Limited 排程內回收 | PASS | 2026-11-24T11:42:44Z 的 Codex.json passed=true；暫時排程執行相同真 CLI lifecycle，成功後已移除。沿用公開單批分類證據，沒有重做分類 |
+| 正式執行參數下的 Codex 隔離 | PASS（現有假憑證服務） | 真 CLI 的 command_execution exit=0，實際受限 SID 與桌面／服務均不同、非管理員；四個保護檔案 Read／ReadWrite、九項程序權限及 desktop-only pipe 均拒絕。探針只開 handle、不讀內容。服務改正式設定後仍須重驗 |
+| 桌面 pipe | PASS | 同日 Windows PowerShell 5.1 probe 驗證 PID 21304、服務 owner、拒絕 opcode 0，沒有呼叫後端 |
+| 正式 origin 授權 | 自動 gate 覆蓋 | 受保護 production.enabled 才能使用唯一正式 origin；禁止未授權正式 host、IDN／尾端點別名、其他 host／port、userinfo／path／query／fragment |
+| 遠端 pipe／獨立 Logon | 未驗證 | 沿用既有 remote-reject／NETWORK deny、Logon XML；不以設定或 transport failure 冒充真實 PASS |
+
+新的 sandbox 名稱 elevated 指 Windows 受限使用者後端，不代表給模型管理員權限。第一次 PowerShell 腳本探針被受限使用者的 execution policy 拒絕；未修改政策，改執行僅測 handle 的編譯探針才取得上述證據。原始 JSONL、SID、PID 與排程日誌保存在 git-ignored test-results，不提交私人內容或憑證。
+
+完整自動驗收與提交／CI 結果記於 PR；尚待管理員放入新代理憑證、正式模式切換、真 Drive 同 ID／SHA 與 iPhone 預覽／套用／Undo。下方 FAIL 是歷史紀錄，已由此段新實測取代。
+
 ## 後續：事件觸發領單（以此段更新目前狀態）
 
 從 commit 9f9f368 接續；事件策略、有限重試及睡眠截止已實作。Worker／D1 schema／App 沒有改動，既有 ProbeOnly 安裝仍保持假憑證、.invalid 與 Manual，沒有更新成生產服務。

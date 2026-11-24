@@ -1,6 +1,6 @@
 # Windows 自動 Runner 與 Broker 候選版
 
-此階段延續 Draft PR #34。ProbeOnly 服務已由使用者安裝並啟動；最新實測見 [Windows ProbeOnly 驗收紀錄](WINDOWS-PROBE-ACCEPTANCE.md)。適用隔離 HTTPS 後端；程式拒絕目前正式 Worker hostname。
+此階段延續 PR #34。ProbeOnly 服務已由使用者安裝並啟動；最新實測見 [Windows ProbeOnly 驗收紀錄](WINDOWS-PROBE-ACCEPTANCE.md)。預設拒絕正式 hostname；只有管理員在受保護服務目錄寫入固定正式 origin 的啟用檔，才允許正式接入。現行授權與操作見 [正式切換](PRODUCTION-CUTOVER.md)。
 
 ## 執行架構
 
@@ -23,6 +23,8 @@ Broker 使用固定操作與後端，HTTP redirect、proxy 與 cookie 停用。I
 Program Files 安裝目錄取消繼承，SYSTEM／Administrators 完整權限，服務 SID 僅 RX，所有者強制 SYSTEM。這避免建立目錄的桌面使用者以 owner 權限改回 ACL。服務程序 DACL 也限制為服務 SID／SYSTEM／Administrators。服務設定與啟停權限限制 SYSTEM／Administrators，服務 privilege 清單僅 SeChangeNotifyPrivilege。
 
 桌面 Runner 與 Codex 共享使用者身分，兩者之間沒有安全隔離承諾。它們能看到批次資料及本次 pipe，但帳號層級 token 僅在獨立服務。具真正 Administrator／SeDebugPrivilege 的程序仍能突破此邊界；Codex 不應獲得這種權限。
+
+Codex CLI 雖以桌面使用者啟動，模型的 shell 命令使用 `windows.sandbox="elevated"` 的既有受限執行身分；這個設定名稱不代表給模型管理員權限。因啟動時有 `--ignore-user-config`，必須明確傳入該設定，不能依賴桌面 config.toml。安裝或修復 sandbox 仍須由使用者另行執行，Runner 不自動執行 setup，不退回 unelevated／full-access。
 
 已編譯服務與 Runner。fixture build 使用編譯期 FIXTURE 才有 loopback HTTP 與固定假 credential。正式 service build 必須以指定服務 SID 執行。fixture 的同 SID 通訊成功不證明跨身分安全。
 

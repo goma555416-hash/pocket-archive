@@ -20,6 +20,7 @@
   ],
   "vars": {
     "APP_ORIGIN": "https://pocket-archive.goma555416.workers.dev",
+    "AI_DISPATCH_MODE": "poll",
     "TOKEN_ENCRYPTION_KEY_VERSION": "1",
     "SESSION_IDLE_DAYS": "14",
     "SESSION_ABSOLUTE_DAYS": "30"

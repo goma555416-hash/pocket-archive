@@ -25,6 +25,16 @@ class Broker : ServiceBase {
     static extern SafePipeHandle CreateNamedPipe(string name, uint openMode, uint mode, uint instances,
         uint outputSize, uint inputSize, uint timeout, ref SecurityAttributes security);
     const string Service = "PocketArchiveBroker";
+    internal const string ProductionOrigin = "https://pocket-archive.goma555416.workers.dev";
+    internal static Uri ValidateOrigin(string value, bool productionEnabled) {
+        var origin = new Uri(value);
+        if (origin.Scheme != "https" || origin.GetLeftPart(UriPartial.Authority) + "/" != origin.AbsoluteUri || origin.UserInfo != "")
+            throw new InvalidOperationException("A fixed HTTPS origin is required");
+        bool productionHost = origin.IdnHost.TrimEnd('.').Equals(new Uri(ProductionOrigin).IdnHost, StringComparison.OrdinalIgnoreCase);
+        if (productionEnabled ? origin.GetLeftPart(UriPartial.Authority) != ProductionOrigin : productionHost)
+            throw new InvalidOperationException("Origin does not match the administrator-approved deployment");
+        return origin;
+    }
     const int ResultLimit = 2 * 1024 * 1024, InboxLimit = 100 * 1024 * 1024;
     static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = ResultLimit };
     static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
@@ -57,10 +67,11 @@ class Broker : ServiceBase {
         var root = AppDomain.CurrentDomain.BaseDirectory;
         client = new SecurityIdentifier(File.ReadAllText(Path.Combine(root,"runner.sid")).Trim());
         if (client.Equals(self)) throw new InvalidOperationException("Distinct identities required");
-        origin = new Uri(File.ReadAllText(Path.Combine(root,"origin.txt")).Trim());
-        if (origin.Scheme != "https" || origin.GetLeftPart(UriPartial.Authority) + "/" != origin.AbsoluteUri ||
-            origin.UserInfo != "" || origin.Host.TrimEnd('.').Equals("pocket-archive.goma555416.workers.dev", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("An isolated HTTPS origin is required");
+        // The opt-in marker shares the service-only configuration ACL; the desktop cannot create it.
+        bool productionEnabled = File.Exists(Path.Combine(root,"production.enabled"));
+        if (productionEnabled && File.ReadAllText(Path.Combine(root,"production.enabled")).Trim() != ProductionOrigin)
+            throw new InvalidOperationException("Invalid production approval marker");
+        origin = ValidateOrigin(File.ReadAllText(Path.Combine(root,"origin.txt")).Trim(), productionEnabled);
         token = File.ReadAllText(Path.Combine(root,"agent.secret")).Trim();
         if (!Regex.IsMatch(token, @"\Apa_agent_[A-Za-z0-9_-]{8,64}\.[A-Za-z0-9_-]{32,128}\z")) throw new InvalidOperationException("Invalid credential format");
 #endif

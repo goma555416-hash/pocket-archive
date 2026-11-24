@@ -8,7 +8,7 @@ if (process.env.PA_TEST_PROCESS_MARKER) {
     const marker=process.env.PA_TEST_PROCESS_MARKER;
     const hold=marker+'.hold.mjs';
     await writeFile(hold,'import {writeFileSync} from "node:fs"; writeFileSync('+JSON.stringify(marker+'.tool')+', JSON.stringify({pid:process.pid})); setInterval(()=>{},1000);');
-    const child=spawn(process.env.PA_CODEX_EXECUTABLE || 'codex',['exec','--ignore-user-config','--ignore-rules','--ephemeral','--skip-git-repo-check','-s','workspace-write','-c','approval_policy="never"','-o',marker+'.response.txt','-'],{windowsHide:true,stdio:['pipe','ignore','pipe']});
+    const child=spawn(process.env.PA_CODEX_EXECUTABLE || 'codex',['exec','--ignore-user-config','--ignore-rules','--ephemeral','--skip-git-repo-check','-s','workspace-write','-c','approval_policy="never"','-c','windows.sandbox="elevated"','-o',marker+'.response.txt','-'],{windowsHide:true,stdio:['pipe','ignore','pipe']});
     child.stderr.pipe(createWriteStream(marker+'.codex.log'));
     child.once('exit',code=>writeFile(marker+'.exit',String(code)));
     child.on('error',()=>process.exit(8));

@@ -21,6 +21,31 @@ const root=resolve('.');
 const out=resolve('test-results/windows-build');
 await mkdir(out,{recursive:true});
 const csc='C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe';
+// Compile the real origin policy with a test entry point; no service or credential is opened.
+await writeFile(join(out,'OriginPolicyProbe.cs'),`using System;
+class OriginPolicyProbe {
+  static void Reject(string origin, bool approved) {
+    try { Broker.ValidateOrigin(origin, approved); } catch { return; }
+    throw new Exception("Unsafe origin accepted: " + origin);
+  }
+  static void Main() {
+    Broker.ValidateOrigin(Broker.ProductionOrigin, true);
+    Broker.ValidateOrigin("https://pocket-archive-isolation.invalid", false);
+    Reject(Broker.ProductionOrigin, false);
+    Reject(Broker.ProductionOrigin + ".", false);
+    Reject("https://pocket-archive。goma555416.workers.dev", false);
+    Reject(Broker.ProductionOrigin + ".", true);
+    Reject(Broker.ProductionOrigin + ":8443", true);
+    Reject("https://other.invalid", true);
+    Reject("http://pocket-archive.goma555416.workers.dev", true);
+    Reject("https://user@pocket-archive.goma555416.workers.dev", true);
+    Reject(Broker.ProductionOrigin + "/api", true);
+    Reject(Broker.ProductionOrigin + "?token=x", true);
+    Reject(Broker.ProductionOrigin + "#fragment", true);
+  }
+}`);
+execFileSync(csc,['/nologo','/main:OriginPolicyProbe','/out:'+join(out,'OriginPolicyProbe.exe'),'/r:System.Net.Http.dll','/r:System.Web.Extensions.dll','/r:System.ServiceProcess.dll',resolve('scripts/windows/Broker.cs'),join(out,'OriginPolicyProbe.cs')]);
+execFileSync(join(out,'OriginPolicyProbe.exe'),[]);
 execFileSync(csc,['/nologo','/define:FIXTURE','/out:'+join(out,'BrokerFixture.exe'),'/r:System.Net.Http.dll','/r:System.Web.Extensions.dll','/r:System.ServiceProcess.dll',resolve('scripts/windows/Broker.cs')]);
 execFileSync(csc,['/nologo',...(real?[]:['/define:FIXTURE']),'/out:'+join(out,'RunnerTest.exe'),resolve('scripts/windows/Runner.cs')]);
 const fx=await aiFixture({dispatchMode:'poll'});
